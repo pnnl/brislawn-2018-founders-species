@@ -1,0 +1,1827 @@
+---
+title: "Founder Species Project"
+output: html_document
+author: "Colin J. Brislawn"
+---
+
+## Forfeiting the founder effect: turnover defines biofilm community succession
+
+#### PNNL, Spring 2018
+
+#### About this document
+
+This is an R Markdown document. Markdown is a simple formatting syntax for
+authoring HTML, PDF, and MS Word documents. For more details on using R Markdown
+see <http://rmarkdown.rstudio.com>.
+
+This project makes use of many packages, especially Phyloseq <https://joey711.github.io/phyloseq/>.
+
+The goal of this document it to provide a comprehensive overview of all methods
+used in the paper for visualizing amplicon data.
+
+### Setup:
+```{r setup, results='hide', warning=F, message=F}
+library("knitr")
+library(checkpoint)
+checkpoint("2017-09-01", use.knitr = T)
+library("rmarkdown")
+library("formatR")
+library("ggplot2")
+library("phyloseq")
+# Checkpoint can't install phyloseq, so install like this:
+#source('http://bioconductor.org/biocLite.R'); biocLite('phyloseq',suppressUpdates = T)
+library("RColorBrewer")
+library("viridis")
+library("scales")
+library("cowplot")
+library("vegan")
+library("dplyr")
+library("multcomp")
+library("reshape2")
+library("picante")
+library("betapart")
+#library("parallel")
+library("tidyr")
+library("broom")
+
+
+#('phyloseq')
+theme_set(theme_bw() + theme(strip.background = element_blank()))
+set.seed(711)
+knitr::opts_chunk$set(cache=TRUE)
+
+```
+
+```{r get-license, include=F, eval=F}
+#installed.packages(fields = "License") %>% data.frame %>% select(Package)
+installed.packages(fields = "License") %>% data.frame() %>% dplyr::select(License) %>% table
+
+version$version.string
+```
+
+### Import data
+
+Our work here will focus on two amplicon data sets. One from the 16S gene, the
+other from the 18S gene. Because there amplicons came from different primers and
+are expected to target different genes (of different evolutionary history,
+length, complexity, etc) they will be analyzed separately. (This also makes the
+stats simpler.)
+
+```{r importdata}
+meta <- import_qiime_sample_data(file.path('../data/metadata.txt'))
+
+
+no_meta <- import_biom(file.path('../data/16S_otus_vsearch/otu_table_w_tax.biom'),
+                       file.path('../data/16S_otus_vsearch/rep_set.tre'))
+full16s <- merge_phyloseq(meta, no_meta)
+full16s
+
+no_meta_18s <- import_biom(file.path('../data/18S_otus_vsearch/otu_table_w_tax.biom'),
+                           file.path('../data/18S_otus_vsearch/rep_set.tre'))
+full18s <- merge_phyloseq(meta, no_meta_18s)
+full18s
+
+```
+
+
+
+### Explore metadata
+
+Let's take a look at columns in the metadata file. Also fix strange columns.
+
+```{r meta, include=T}
+# Let's use 16S, as it's our main focus, and has more samples.
+meta <- sample_data(full16s)
+meta.n_unique <- rapply(meta, function(x) length(table(x)))
+# The pairwise interesting factors
+meta.n_unique[meta.n_unique == 2]
+# Other potentially interesting factors
+meta.n_unique[meta.n_unique > 2 & meta.n_unique < max(meta.n_unique)]
+
+sample_data(full16s)$Day <- factor(sample_data(full16s)$Day)
+sample_data(full18s)$Day <- factor(sample_data(full18s)$Day)
+
+```
+
+## Preprocess
+
+Remove all non-bacteria microbes, along with off-target effects of the 16S primers,
+like OTUs annotated as chloroplasts or mitochondria.
+
+Rarefy and select Days 8-79 as a cohort for downstream analysis. The initial day
+of sampling had very little biomass on the slides, and very few samples were
+successfully sequenced. Day 8 will be the initial day analyzed.
+
+#### 16S
+
+```{r preprocess16s, include=T}
+
+filtered16s <- subset_taxa(full16s, Rank1 == "k__Bacteria")
+ntaxa(filtered16s) / ntaxa(full16s)
+sum(taxa_sums(filtered16s)) / sum(taxa_sums(full16s))
+
+# What taxa are being removed in this filter?
+full16s %>% subset_taxa(Rank1 != "k__Bacteria") %>% tax_table %>% data.frame %>% select_("Rank1") %>% table
+# Mostly Archaea and Unassigned microbes.
+
+filtered16s <- subset_taxa(filtered16s, !(Rank5 %in% c("f__mitochondria", "f__chloroplast")))
+ntaxa(filtered16s) / ntaxa(full16s)
+sum(taxa_sums(filtered16s)) / sum(taxa_sums(full16s))
+
+# Just to be sure, let's also filter at the class level.
+filtered16s <- subset_taxa(filtered16s, Rank3 != "c__Chloroplast")
+ntaxa(filtered16s) / ntaxa(full16s)
+sum(taxa_sums(filtered16s)) / sum(taxa_sums(full16s))
+# Lot's of c__Chloroplast in these samples!
+
+plot(sort(sample_sums(filtered16s)))
+#ggplot(sample_data(filtered16s), aes(sample_sums(filtered16s))) + geom_histogram(binwidth = 10000, aes(fill=Day))
+
+sort(sample_sums(filtered16s))[1:30]
+
+set.seed(711)
+rar.16s <- rarefy_even_depth(filtered16s, sample.size = 13000, replace = F)
+rar.16s
+
+rar.16s.cohort <- subset_samples(rar.16s, Day %in% c(8,14,35,56,79))
+rar.16s.cohort
+
+```
+
+#### 18S
+
+18S is handled similarly. A different set of off-target effects for 18S primers
+are used.
+
+```{r preprocess18s, include=T}
+# Remove 'tomatoes' (actually from two types of bacteria).
+
+badTaxa <- full18s %>% subset_taxa(Rank7 == "D_12__Solanum lycopersicum (tomato)") %>% taxa_names
+allTaxa <- taxa_names(full18s)
+keepTaxa <- allTaxa[!(allTaxa %in% badTaxa)]
+
+filtered18s <- prune_taxa(keepTaxa, full18s)
+
+ntaxa(filtered18s) / ntaxa(full18s)
+sum(taxa_sums(filtered18s)) / sum(taxa_sums(full18s))
+
+
+
+plot(sort(sample_sums(filtered18s)))
+#ggplot(sample_data(filtered18s), aes(sample_sums(filtered18s))) + geom_histogram(binwidth = 10000, aes(fill=Day))
+
+sort(sample_sums(filtered18s))[1:30]
+
+set.seed(711)
+rar.18s <- rarefy_even_depth(filtered18s, sample.size = 13000, replace = F)
+rar.18s
+
+rar.18s.cohort <- subset_samples(rar.18s, Day %in% c(8,14,35,56,79))
+rar.18s.cohort
+
+```
+
+
+#### Cohorts used in downstream analysis
+
+```{r, include=F}
+# All samples from MiSeq
+table(sample_data(full16s)$Day)
+# Samples with good depth
+table(sample_data(rar.16s)$Day)
+# Samples used in analysis.
+table(sample_data(rar.16s.cohort)$Day)
+
+# All samples from MiSeq
+table(sample_data(full18s)$Day)
+# Samples with good depth
+table(sample_data(rar.18s)$Day)
+# Samples used in analysis.
+table(sample_data(rar.18s.cohort)$Day)
+
+```
+
+The main feature is Day, with most samples from later days.
+
+Looks like we lost samples throughout. Mostly the loss near the start is more noticeable.
+
+#### Taxa counts
+
+How many Phyla and OTUs are in the initial Day 8 samples?
+
+
+```{r taxa-counts}
+rar.16s.cohort %>% subset_samples(Day == "8") %>% filter_taxa(function(x){max(x) > 0 }, prune = T) %>% tax_glom("Rank2") %>% ntaxa
+rar.18s.cohort %>% subset_samples(Day == "8") %>% filter_taxa(function(x){max(x) > 0 }, prune = T) %>% tax_glom("Rank3") %>% ntaxa
+
+rar.16s.cohort %>% subset_samples(Day == "8") %>% filter_taxa(function(x){max(x) > 0 }, prune = T) %>% ntaxa
+rar.18s.cohort %>% subset_samples(Day == "8") %>% filter_taxa(function(x){max(x) > 0 }, prune = T) %>% ntaxa
+```
+
+# Analysis and Graphs
+
+I'll use rarefied data, for consistency.
+
+## Beta Diversity
+
+Beta Diversity was investigated, but not included in final paper.
+
+PyNAST alignments to the Greengenes and Silva database were used for both 16S and 18S data, respectively. ML Tree was built using FastTree2.
+
+```{r beta-colors, include=F}
+wunifrac.16s = ordinate(rar.16s.cohort, method = "PCoA", distance = "wunifrac")
+
+# Some cool colormaps
+# We have chosen to use the darker part of viridis and the lighter part of plasma.
+v <- scale_color_viridis(discrete = T, direction = -1, begin = 0, end = 0.9)
+pl <- scale_color_viridis(option = "C", discrete = T, direction = -1, begin = .3, end = 1)
+
+v.fill <- scale_fill_viridis(discrete = T, direction = -1, begin = 0, end = 0.9)
+pl.fill <- scale_fill_viridis(option = "C", discrete = T, direction = -1, begin = .3, end = 1)
+
+cb <- scale_color_brewer(palette = "YlGnBu") #ColorBrewer
+rb <- scale_color_brewer(palette = "Spectral") #RainBow
+
+p1 <- plot_ordination(rar.16s.cohort, wunifrac.16s, color="Day") + v
+p2 <- plot_ordination(rar.16s.cohort, wunifrac.16s, color="Day") + pl
+p3 <- plot_ordination(rar.16s.cohort, wunifrac.16s, color="Day") + cb
+p4 <- plot_ordination(rar.16s.cohort, wunifrac.16s, color="Day") + rb
+
+plot_grid(p1, p2, p3, p4)
+```
+
+Viridis is in vogue, and looks pretty good here.
+
+
+```{r beta-both}
+bray.16s = ordinate(rar.16s.cohort, method = "PCoA", distance = "bray")
+bray.18s = ordinate(rar.18s.cohort, method = "PCoA", distance = "bray")
+
+plot_ordination(rar.16s.cohort, bray.16s, color="Day") + v
+plot_ordination(rar.18s.cohort, bray.18s, color="Day") + pl
+
+```
+
+
+```{r adonistest, include=F, eval=F}
+#### ADONIS test on beta diversity matrix
+df = as(sample_data(rar.16s.cohort), "data.frame")
+d = distance(rar.16s.cohort, "bray")
+cohort.adonis = adonis(d ~ Day, df)
+cohort.adonis
+```
+
+
+
+
+
+
+
+
+## Alpha diversity
+
+```{r extend-alpha-diversity, include=F}
+# This function extends phyloseq::estimate_richness() function by
+# implementing two evenness metrics.
+# See this PR https://github.com/joey711/phyloseq/pull/575
+
+estimate_richness_mod <- function(physeq, split=TRUE, measures=NULL){
+
+  if( !any(otu_table(physeq)==1) ){
+	  # Check for singletons, and then warning if they are missing.
+	  # These metrics only really meaningful if singletons are included.
+		warning(
+			"The data you have provided does not have\n",
+			"any singletons. This is highly suspicious. Results of richness\n",
+			"estimates (for example) are probably unreliable, or wrong, if you have already\n",
+			"trimmed low-abundance taxa from the data.\n",
+			"\n",
+			"We recommended that you find the un-trimmed data and retry."
+		)
+	}
+
+	# If we are not splitting sample-wise, sum the species. Else, enforce orientation.
+	if( !split ){
+		OTU <- taxa_sums(physeq)		
+	} else if( split ){
+		OTU <- as(otu_table(physeq), "matrix")
+		if( taxa_are_rows(physeq) ){ OTU <- t(OTU) }
+	}
+
+	# Define renaming vector:
+	renamevec = c("Observed", "Chao1", "ACE", "Shannon", "Pielou", "Simpson", "InvSimpson", "SimpsonE", "Fisher")
+	names(renamevec) <- c("S.obs", "S.chao1", "S.ACE", "shannon", "pielou", "simpson", "invsimpson", "simpsone", "fisher")
+	# If measures was not explicitly provided (is NULL), set to all supported methods
+	if( is.null(measures) ){
+	  measures = as.character(renamevec)
+	}
+  # Rename measures if they are in the old-style
+  if( any(measures %in% names(renamevec)) ){
+    measures[measures %in% names(renamevec)] <- renamevec[names(renamevec) %in% measures]
+  }
+
+  # Stop with error if no measures are supported
+  if( !any(measures %in% renamevec) ){
+    stop("None of the `measures` you provided are supported. Try default `NULL` instead.")
+  }
+
+  # Initialize to NULL
+  outlist = vector("list")
+	# Some standard diversity indices
+  estimRmeas = c("Chao1", "Observed", "ACE")
+	if( any(estimRmeas %in% measures) ){
+    outlist <- c(outlist, list(t(data.frame(estimateR(OTU)))))
+	}
+	if( "Shannon" %in% measures ){
+    outlist <- c(outlist, list(shannon = diversity(OTU, index="shannon")))
+	}
+  if( "Pielou" %in% measures){
+  	#print("Starting Pielou")
+  	outlist <- c(outlist, list(pielou = diversity(OTU, index = "shannon")/log(estimateR(OTU)["S.obs",])))
+  }
+	if( "Simpson" %in% measures ){
+	  outlist <- c(outlist, list(simpson = diversity(OTU, index="simpson")))
+	}
+	if( "InvSimpson" %in% measures ){
+	  outlist <- c(outlist, list(invsimpson = diversity(OTU, index="invsimpson")))
+	}
+  if( "SimpsonE" %in% measures ){
+  	#print("Starting SimpsonE")
+  	outlist <- c(outlist, list(simpsone = diversity(OTU, index="invsimpson")/estimateR(OTU)["S.obs",]))
+  }
+	if( "Fisher" %in% measures ){
+    fisher = tryCatch(fisher.alpha(OTU, se=TRUE),
+      warning=function(w){
+        warning("phyloseq::estimate_richness: Warning in fisher.alpha(). See `?fisher.fit` or ?`fisher.alpha`. Treat fisher results with caution")
+        suppressWarnings(fisher.alpha(OTU, se=TRUE)[, c("alpha", "se")])
+      }
+    )
+    if(!is.null(dim(fisher))){
+      colnames(fisher)[1:2] <- c("Fisher", "se.fisher")
+      outlist <- c(outlist, list(fisher))
+    } else {
+      outlist <- c(outlist, Fisher=list(fisher))
+    }
+	}
+  out = do.call("cbind", outlist)
+  # Rename columns per renamevec
+  namechange = intersect(colnames(out), names(renamevec))
+  colnames(out)[colnames(out) %in% namechange] <- renamevec[namechange]
+  # Final prune to just those columns related to "measures". Use grep.
+  colkeep = sapply(paste0("(se\\.){0,}", measures), grep, colnames(out), ignore.case=TRUE)
+  out = out[, sort(unique(unlist(colkeep))), drop=FALSE]
+  # Make sure that you return a data.frame for reliable performance.
+  out <- as.data.frame(out)
+	return(out)
+}
+
+```
+
+
+```{r alpha.alt, include=T}
+metrics <- c("Observed", "SimpsonE")
+rich.16s <- estimate_richness_mod(rar.16s.cohort, measures = metrics)
+rich.18s <- estimate_richness_mod(rar.18s.cohort, measures = metrics)
+
+# Rename for graphing
+graphnames <- c("Richness", "Evenness")
+names(rich.16s) <- graphnames
+names(rich.18s) <- graphnames
+
+
+# merge richness with metadata
+DF.16s <- merge(rich.16s, sample_data(rar.16s.cohort), by = 0)
+DF.18s <- merge(rich.18s, sample_data(rar.18s.cohort), by = 0)
+
+# melt for graphing
+reshapevars <- c("Richness", "Evenness")
+mdf.16s = reshape2::melt(DF.16s, measure.vars = graphnames)
+mdf.18s = reshape2::melt(DF.18s, measure.vars = graphnames)
+
+
+alpha.16s.alt <- ggplot(mdf.16s, aes(Day, value, color = Day))
+alpha.16s.alt <- alpha.16s.alt +
+  geom_boxplot(color = "gray", outlier.size = 0) +
+  geom_jitter(width = 0.2) +
+  facet_grid(facets = variable~., scales = "free_y", switch = "y") +
+  labs(x = "Sampling Day", title = "16S OTUs") +
+  v + theme(legend.position = "none",
+            strip.background = element_blank(),
+            axis.title.y = element_blank(),
+            strip.placement = "outside"
+            #, plot.margin=unit(c(5,5,-25,5), units = "pt")
+            )
+alpha.16s.alt
+
+alpha.18s.alt <- ggplot(mdf.18s, aes(Day, value, color = Day))
+alpha.18s.alt <- alpha.18s.alt +
+  geom_boxplot(color = "gray", outlier.size = 0) +
+  geom_jitter(width = 0.2) +
+  facet_grid(facets = variable~., scales = "free_y", switch = "y") +
+  labs(x = "Sampling Day", title = "18S OTUs") +
+  pl + theme(legend.position = "none",
+            strip.background = element_blank(),
+            axis.title.y = element_blank(),
+            strip.text.y = element_blank()
+            #axis.text.y = element_blank()
+            #, plot.margin=unit(c(5,5,-25,5), units = "pt")
+            )
+alpha.18s.alt
+
+
+```
+
+
+```{r alpha-graph, include=T, fig.height=5, fig.width=5}
+alpha.both.alt <- plot_grid(alpha.16s.alt, alpha.18s.alt,
+                        #labels = c("A", "B"),
+                        align = "h", nrow = 1, rel_widths = c(1.1, 1))
+alpha.both.alt
+ggsave("./figures/alpha.both.pdf", alpha.both.alt, scale = 1.3, width = 89, height = 77, units = "mm")
+
+
+```
+
+### Stat test for alpha diversity
+
+Pairwise comparison between groups using `multcomp::glht()`
+
+#### 16S
+```{r alpha.test.16s}
+# Simple means
+DF.16s %>% group_by(Day) %>% summarize(meanRich = mean(Richness), meanEven = mean(Evenness))
+1 - 233.3889 / 557.7500 # richness decrease between Day 8 and 79
+0.02940754 / 0.02391469 - 1 # Evenness increase between Day 35 and 79
+
+#DF.16s %>% ggplot(aes(x = Richness)) + geom_dotplot() + facet_grid(Day~.)
+DF.16s %>% glm(Richness ~ Day, family = "poisson", data = .) %>%
+  glht(linfct = mcp(Day = "Tukey")) %>% summary %>% tidy %>% kable
+
+#DF.16s %>% ggplot(aes(x = Evenness)) + geom_dotplot() + facet_grid(Day~.)
+DF.16s %>% glm(Evenness ~ Day, family = "Gamma", data = .) %>%
+  glht(linfct = mcp(Day = "Tukey")) %>% summary %>% tidy %>% kable
+
+# overall median evenness
+DF.16s %>% summarize(medRich = median(Richness), medEven = median(Evenness))
+
+
+```
+
+
+#### 18S
+```{r alpha.test.18s}
+# Simple means
+DF.18s %>% group_by(Day) %>% summarize(meanRich = mean(Richness), meanEven = mean(Evenness))
+227.0000 / 372.7500 # fraction of OTUs remaining on day 79 (vs day 8)
+1 - 227.0000 / 372.7500 # fraction of OTUs lost on day 79 (vs day 8)
+
+#DF.18s %>% ggplot(aes(x = Richness)) + geom_dotplot() + facet_grid(Day~.)
+DF.18s %>% glm(Richness ~ Day, family = "poisson", data = .) %>%
+  glht(linfct = mcp(Day = "Tukey")) %>% summary %>% tidy %>% kable
+
+#DF.18s %>% ggplot(aes(x = Evenness)) + geom_dotplot() + facet_grid(Day~.)
+DF.18s %>% glm(Evenness ~ Day, family = "Gamma", data = .) %>%
+  glht(linfct = mcp(Day = "Tukey")) %>% summary %>% tidy %>% kable
+
+# overall median evenness
+DF.18s %>% summarize(medRich = median(Richness), medEven = median(Evenness))
+
+
+```
+
+
+
+
+
+## Abundance plots
+
+There will be a matching set of relative abundance plots, for each amplicon type.
+
+1.  Area plot at Phylum level of most common taxa. Samples merged by day.
+
+2.  Rank abundance curve of common genera in day 8 and day 79. This will show
+variance of the separate genera and help visualize the selection threshold for
+defining a 'founders species.'
+
+3.  Line plot of selected genera above that threshold, highlighting 'founders
+species.' It will not show variance of each genera; variance is already shown
+on 2. and additional information would muddy the graph.
+
+When initially proposed, we called 2. a 'scree plot.' We now use the more
+accurate term 'rank abundance curve.' (A scree plots is a rank abundance curve
+used to show the decreasing eigenvalues of an ordinations.) While our
+documentation uses the correct term, 'scree' is still used in the code.
+
+
+### 16S RA 1: phylum
+
+```{r ra.phylum.16s}
+# Merge by day
+cohort.merged <- merge_samples(rar.16s.cohort, "Day")
+
+# Fix mangled metadata
+sample_data(cohort.merged)$Day <- as.numeric(sample_names(cohort.merged))
+
+# Glom OTUs by Phyla and transform to RA
+glom <- tax_glom(cohort.merged, taxrank = "Rank2")
+glom <- transform_sample_counts(glom, function(x) x / sum(x))
+
+# Select top Phyla
+glom.top <- prune_taxa(names(sort(taxa_sums(glom), TRUE))[0:7], glom)
+sum(taxa_sums(glom.top)) / sum(taxa_sums(glom))
+
+# Melt for graphing and strip prefix
+glom.top.melt <- psmelt(glom.top)
+glom.top.melt <- arrange(glom.top.melt, Day, Rank2)
+glom.top.melt$Phylum <- gsub('p__', '', glom.top.melt$Rank2)
+
+# Graph
+glom.top.gg <- ggplot(glom.top.melt, aes(x = as.numeric(Day), y = Abundance, fill = Phylum))
+part1 <- glom.top.gg + geom_area() +
+  v.fill +
+  labs(fill = "Bacteria", y = "Abundance") +
+  theme(plot.margin=unit(c(5,5,-25,5), units = "pt"), legend.justification = 'left') +
+  scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL)
+part1
+
+
+```
+
+
+### 18S RA 1: phylum
+
+```{r ra.phylum.18s}
+# Merge by day
+cohort.merged18s <- merge_samples(rar.18s.cohort, "Day")
+
+# Fix mangled metadata
+sample_data(cohort.merged18s)$Day <- as.numeric(sample_names(cohort.merged18s))
+
+# Glom OTUs by Phyla and transform to RA
+glom.18s <- tax_glom(cohort.merged18s, taxrank = "Rank3")
+glom.18s <- transform_sample_counts(glom.18s, function(x) x / sum(x))
+
+# Select top Phyla
+glom.18s.top <- prune_taxa(names(sort(taxa_sums(glom.18s), TRUE))[0:7], glom.18s)
+sum(taxa_sums(glom.18s.top)) / sum(taxa_sums(glom.18s))
+
+# Melt for graphing and strip prefix
+glom.18s.top.melt <- psmelt(glom.18s.top)
+glom.18s.top.melt <- arrange(glom.18s.top.melt, Day, Rank3)
+
+glom.18s.top.melt$Phylum <- gsub('D_.__', '', glom.18s.top.melt$Rank3)
+glom.18s.top.melt$Phylum <- gsub('D_..__', '', glom.18s.top.melt$Phylum)
+
+# Graph
+glom.18s.top.gg <- ggplot(glom.18s.top.melt, aes(x = as.numeric(Day), y = Abundance, fill = Phylum))
+part1.18s <- glom.18s.top.gg + geom_area() +
+  pl.fill +
+  labs(fill="Eukaryotes", y = "Abundance") +
+  theme(plot.margin=unit(c(0,5,5,5), units = "pt"), legend.justification = 'left') +
+  scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL)
+part1.18s
+
+
+```
+
+```{r ra.phylum.graph, include=T, fig.height=5, fig.width=5}
+phylum.both <- plot_grid(part1, part1.18s, rel_heights = c(1,1.2),
+                        #labels = c("A", "B"),
+                        align = "v", nrow = 2)
+phylum.both
+
+ggsave("./figures/phylum.both.pdf", phylum.both, scale = 1.3, width = 89, height = 89, units = "mm")
+
+
+```
+
+
+
+```{r plot-fig1, include=T, results='hide'}
+combined.fig1 <-
+  plot_grid(alpha.both.alt, phylum.both, labels = c("A", "B"),
+            align = "h", nrow = 1, rel_widths = c(1.1, 1), scale = c(1,1))
+ggsave("./figures/fig1.pdf", combined.fig1, scale = 1.4, width = 178, height = 77, units = "mm")
+
+combined.wide.fig1 <-
+  plot_grid(alpha.both.alt, phylum.both, labels = c("A", "B"),
+            align = "v", ncol = 1, rel_heights = c(1, 1.2), scale = c(1,1))
+ggsave("./figures/fig1-wide.pdf", combined.wide.fig1, scale = 1.3, width = 89, height = 160, units = "mm")
+
+
+
+```
+
+
+
+```{r, cache=F, eval=F, include=T}
+#Save and exit.
+knitr::knit_exit()
+
+```
+
+
+
+
+
+
+### Function to enhance a psmelt data.frame
+
+These functions are specific to this data set and are not intended for general use.
+
+`clean_gg_tax()` strip GreenGenes prefixes from taxonomy strings.
+
+`clean_silva_tax()` strip SILVA prefixes from taxonomy strings.
+
+`aggregate_tax_by_day()` aggregate(Abundance ~ Day + Taxonomy) and add stats used for box plots.
+
+```{r new_functions, include=T}
+clean_gg_tax <- function(pmelted){
+  pmelted$Taxonomy <- paste(pmelted$Rank4,
+                            pmelted$Rank5,
+                            pmelted$Rank6, sep = ", ")
+  pmelted$Taxonomy <- gsub('.__', '', pmelted$Taxonomy)
+  pmelted$Taxonomy <- gsub(' ,', '', pmelted$Taxonomy)
+
+  pmelted$Kingdom <- gsub('.__', '', pmelted$Rank1)
+  pmelted$Phylum <- gsub('.__', '', pmelted$Rank2)
+  pmelted$Class <- gsub('.__', '', pmelted$Rank3)
+  pmelted$Order <- gsub('.__', '', pmelted$Rank4)
+  pmelted$Family <- gsub('.__', '', pmelted$Rank5)
+  pmelted$Genus <- gsub('.__', '', pmelted$Rank6)
+
+  return(pmelted)
+}
+
+clean_silva_tax <- function(pmelted){
+  pmelted$Taxonomy <- paste(pmelted$Rank4,
+                            pmelted$Rank5,
+                            pmelted$Rank6, sep = ", ")
+  pmelted$Taxonomy <- gsub('D_.__', '', pmelted$Taxonomy)
+  pmelted$Taxonomy <- gsub('D_..__', '', pmelted$Taxonomy)
+  pmelted$Taxonomy <- gsub(' ,', '', pmelted$Taxonomy)
+
+  pmelted$Domain <- gsub('D_.__', '', pmelted$Rank1)  #D_0
+  pmelted$Kingdom <- gsub('D_.__', '', pmelted$Rank2) #D_1
+  pmelted$Phylum <- gsub('D_.__', '', pmelted$Rank3)  #D_2
+  pmelted$Class <- gsub('D_.__', '', pmelted$Rank4)   #D_3
+  pmelted$Order <- gsub('D_.__', '', pmelted$Rank5)   #D_4
+  pmelted$Family <- gsub('D_.__', '', pmelted$Rank6)  #D_5
+  pmelted$Genus <- gsub('D_.__', '', pmelted$Rank7)  #D_6
+
+  return(pmelted)
+}
+
+aggregate_tax_by_day <- function(pmelted){
+  # Calculate median of the Abundance for each taxa at each day
+  paggregated <- aggregate(Abundance ~ OTU + Day + Taxonomy,
+                       data = pmelted,
+                       FUN = function(x) median(x))
+  return(paggregated)
+}
+
+aggregate_tax_by_day_n <- function(pmelted){
+  # Same as above, but also casts Day as numeric
+  paggregated <- aggregate(Abundance ~ OTU + Day + Taxonomy,
+                       data = pmelted,
+                       FUN = function(x) median(x))
+
+  paggregated$Day <- as.numeric(levels(paggregated$Day))[paggregated$Day]
+
+  return(paggregated)
+}
+
+
+```
+
+```{r glom_for_ra_graphs}
+# Glom OTUs by phyla and transform to RA
+glom6.16s <- tax_glom(rar.16s.cohort, taxrank = "Rank6")
+glom6.16s <- transform_sample_counts(glom6.16s, function(x) x / sum(x))
+
+# This overwrites the genera used before.
+glom.18s <- tax_glom(rar.18s.cohort, taxrank = "Rank7")
+glom.18s <- transform_sample_counts(glom.18s, function(x) x / sum(x))
+```
+
+
+### Set threshold for inclusion
+```{r ra.threshold}
+selection_threshold <- 0.02
+
+# for a comparison to 0.05, see the file `Compare .02 vs .05.PNG`
+```
+
+### 16S genera rank abundance curve, for days 8 and 79
+```{r ra.scree, fig.width=8, fig.height=4}
+# Select top genera from day 8 and 79
+glom6.16s.days <- subset_samples(glom6.16s, Day %in% c("8", "79"))
+glom6.16s.days.top <- prune_taxa(names(sort(taxa_sums(glom6.16s.days), TRUE))[0:20], glom6.16s.days)
+
+# Melt to dataframe
+glom6.16s.days.top.melt <- clean_gg_tax(psmelt(glom6.16s.days.top))
+
+# Sort OTUs by their medians in day 8
+glom6.16s.days.top.melt.8 <- subset(glom6.16s.days.top.melt, Day == "8")
+reordered_levels <- levels(reorder(glom6.16s.days.top.melt.8$OTU, -(glom6.16s.days.top.melt.8$Abundance), median))[]
+glom6.16s.days.top.melt$OTU <- factor(glom6.16s.days.top.melt$OTU, levels = reordered_levels)
+
+levels(glom6.16s.days.top.melt$Day) <- c("Day 8", "Day 79")
+
+# Graph, splitting by day
+glom6.16s.days.top.gg <- ggplot(glom6.16s.days.top.melt, aes(x=OTU, y = Abundance))
+scree.16s <- glom6.16s.days.top.gg +
+  geom_hline(yintercept = selection_threshold, size = 1) +
+  geom_boxplot(aes(color = Phylum)) +
+  v +
+  labs(title = "Most Common Bacteria", y = "Abundance") +
+  facet_grid(~Day) +
+  #scale_y_continuous(limits = c(-.02, .95)) +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "bottom",
+        strip.background = element_blank()) +
+  guides(color=guide_legend(nrow=2,byrow=TRUE))
+scree.16s
+
+
+# Get the medians shown in the graph
+glom6.16s.days.top.median <- aggregate_tax_by_day(glom6.16s.days.top.melt)
+
+# Select the genera with medians above the cutoff.
+glom6.16s.days.top.median.top <- glom6.16s.days.top.median[glom6.16s.days.top.median$Abundance > selection_threshold, ]
+glom6.16s.days.top.median.top %>% arrange(Day, -Abundance)
+
+# Select these OTUs from all days, for use in the line graphs
+glom6.16s.all.select_taxa <- prune_taxa(as.character(glom6.16s.days.top.median.top$OTU), glom6.16s)
+glom6.16s.all.select_taxa
+
+```
+
+
+
+### 18S rank abundance curve, for days 8 and 79
+
+```{r ra.scree.18s, fig.width=8, cache=T}
+# Select top genera from day 8 and 79
+glom.18s.days <- subset_samples(glom.18s, Day %in% c("8", "79"))
+glom.18s.days.top <- prune_taxa(names(sort(taxa_sums(glom.18s.days), TRUE))[0:20], glom.18s.days)
+
+# Melt to dataframe
+glom.18s.days.top.melt <- clean_silva_tax(psmelt(glom.18s.days.top))
+
+# Sort OTUs by their medians in day 8
+glom.18s.days.top.melt.8 <- subset(glom.18s.days.top.melt, Day == "8")
+reordered_levels.18s <- levels(reorder(glom.18s.days.top.melt.8$OTU, -(glom.18s.days.top.melt.8$Abundance), median))[]
+glom.18s.days.top.melt$OTU <- factor(glom.18s.days.top.melt$OTU, levels = reordered_levels.18s)
+
+levels(glom.18s.days.top.melt$Day) <- c("Day 8", "Day 79")
+
+
+# Graph, splitting by day
+glom.18s.days.top.gg <- ggplot(glom.18s.days.top.melt, aes(x=OTU, y = Abundance))
+scree.18s <- glom.18s.days.top.gg +
+  geom_hline(yintercept = selection_threshold, size = 1) +
+  geom_boxplot(aes(color = Phylum)) +
+  pl +
+  labs(title = "Most Common Eukaryotes", y = "Abundance") +
+  facet_grid(~Day) +
+  scale_y_continuous(breaks = c(.2, .4, .6, .8)) +
+  theme(axis.text.x=element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "bottom",
+        strip.background = element_blank()) +
+  guides(color=guide_legend(nrow=2,byrow=TRUE))
+scree.18s
+
+
+# Get the medians shown in the graph
+glom.18s.days.top.median <- aggregate_tax_by_day(glom.18s.days.top.melt)
+
+# Select the genera with medians above the cutoff.
+glom.18s.days.top.median.top <- glom.18s.days.top.median[glom.18s.days.top.median$Abundance > selection_threshold, ]
+glom.18s.days.top.median.top %>% arrange(Day, -Abundance)
+
+# Select these OTUs from all days, for use in the line graphs
+glom.18s.all.select_taxa <- prune_taxa(as.character(glom.18s.days.top.median.top$OTU), glom.18s)
+glom.18s.all.select_taxa
+
+
+
+```
+
+```{r ra.scree.combined, fig.width=8, cache=T}
+plot_grid(scree.16s, scree.18s, labels = c("A", "B"), ncol = 2, align = "h")
+
+```
+
+
+### Community coverage of the select_taxa
+
+Let's evaluate what proportion of the overall community is captured by the most
+common genera we are showing here.
+
+```{r selection,coverage}
+sum(sample_sums(glom6.16s.all.select_taxa))/sum(sample_sums(glom6.16s))
+sum(sample_sums(glom.18s.all.select_taxa))/sum(sample_sums(glom.18s))
+
+```
+
+
+
+
+
+
+
+### 16S time series line plot
+
+Note that we intentionally replace these taxonomies with more useful annotations.
+
+
+```{r ra.16s.line, fig.width=8, fig.height=4}
+# Graph this: glom6.16s.all.select_taxa
+select.16s.melt <- clean_gg_tax(psmelt(glom6.16s.all.select_taxa))
+#head(select.16s.melt)
+
+# Aggregate for graphing
+select.16s.median <- aggregate_tax_by_day_n(select.16s.melt)
+
+# Add category for the founders species
+select.16s.median.founders <- select.16s.median[select.16s.median$Abundance > selection_threshold & select.16s.median$Day == "8", ]
+
+select.16s.median$`Founders Species` <- select.16s.median$OTU %in% select.16s.median.founders$`OTU`
+select.16s.median$`Founders Species` <- factor(select.16s.median$`Founders Species`,
+                                               levels = c("TRUE", "FALSE"),
+                                               labels = c("Founders Species", "Other Common Genera"))
+
+# replace taxa names
+select.16s.median$Taxonomy[select.16s.median$Taxonomy == "GMD14H09, "] <- "Deltaproteobacteria, GMD14H09"
+
+select.16s.gg <- ggplot(select.16s.median, aes(x = Day, y = Abundance))
+#select.16s.gg + geom_bar(aes(fill = Taxonomy), color = 'black', stat = 'identity')
+selected.16s.line <- select.16s.gg +
+  geom_line(aes(color = Taxonomy, linetype=`Founders Species`)) +
+  geom_point(aes(color = Taxonomy)) + v +
+  scale_linetype(name="", guide = FALSE) +
+  scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL) +
+  #   #This next line is a kludge. I manually dash the legend lines to show which ones are FS.
+  guides(color=guide_legend(override.aes=list(linetype=c(2,2,2,1,1,1,2,1), shape = c(NA))))
+
+selected.16s.line
+
+# Table of species
+select.16s.median %>% dplyr::select(Taxonomy, `Founders Species`) %>% unique %>% kable
+
+```
+
+### 18S time series line plot
+
+```{r ra.18s.line, fig.width=8, fig.height=4}
+# Graph this: glom6.16s.all.select_taxa
+select.18s.melt <- clean_silva_tax(psmelt(glom.18s.all.select_taxa))
+#head(select.18s.melt)
+
+# Aggregate for graphing
+select.18s.median <- aggregate_tax_by_day_n(select.18s.melt)
+
+# Add category for the founders species
+select.18s.median.founders <- select.18s.median[select.18s.median$Abundance > selection_threshold & select.18s.median$Day == "8", ]
+
+select.18s.median$`Founders Species` <- select.18s.median$OTU %in% select.18s.median.founders$`OTU`
+select.18s.median$`Founders Species` <- factor(select.18s.median$`Founders Species`,
+                                               levels = c("TRUE", "FALSE"),
+                                               labels = c("Founders Species", "Other Common Genera"))
+
+select.18s.gg <- ggplot(select.18s.median, aes(x = Day, y = Abundance))
+#select.18s.gg + geom_bar(aes(fill = Taxonomy), color = 'black', stat = 'identity')
+select.18s.line <- select.18s.gg +
+  geom_line(aes(color = Taxonomy, linetype=`Founders Species`)) +
+  geom_point(aes(color = Taxonomy)) + pl +
+  scale_linetype(name= element_blank()) +
+  scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL) +
+  theme(legend.spacing = unit(-0.5, "cm"), legend.background = element_blank()) +
+  #   #This next line is a kludge. I manually dash the legend lines to show which ones are FS.
+  guides(color     = guide_legend(override.aes=list(linetype=c(1,1,1,1,2,2,1), shape = c(NA)), order = 1)
+         ,linetype = guide_legend(override.aes=list(linetype=c(1,2)), order = 2)
+        )
+
+select.18s.line
+
+# Table of species
+select.18s.median %>% dplyr::select(Taxonomy, `Founders Species`) %>% unique %>% kable
+
+
+```
+
+
+
+### Combined time series graph
+```{r grphs.alt, fig.width=12, fig.height=6, results='hide'}
+scree.line.both.alt <- plot_grid(rel_heights = c(1, 1.1),
+                                 labels = c("A", "B", "C", "D"),
+          scree.16s + theme(legend.position = "right") + guides(color=guide_legend(byrow=F)),
+          scree.18s + theme(legend.position = "right") + guides(color=guide_legend(byrow=F)),
+          selected.16s.line,
+          select.18s.line)
+#scree.line.both.alt
+
+ggsave("./figures/scree_and_line.pdf", scree.line.both.alt, scale = 1.6, width = 183, height = 82, units = "mm")
+
+
+```
+
+
+### Inspect specific microbes to correct or contextualize their taxonomy
+
+```{r inspect-specific-taxa, include=T, eval=F}
+glom6.16s.all.select_taxa %>% tax_table()
+# Look at OTU_18 (o__GMD14H09) and OTU_574 (o__Stramenopiles)
+
+# ¿Qué es un o__GMD14H09?
+inspect.o__GMD14H09 <- full16s %>%
+  merge_samples(group = "SampleType") %>%
+  psmelt() %>% filter(Rank4 == "o__GMD14H09")
+inspect.o__GMD14H09 %>% head
+# This family is mostly OTU_18
+"
+>OTU_18
+TACGGAGGGTGCAAGCGTTGTTCGGAATCATTGGGCGTAAAGGGCGCGCAGGCGGTCTTTCAAGTCCGGCGTGAAATCCC
+AGGGCTCAACCCTGGAACTGCGTTGGAAACTGGACGACTTGAGTATGGGAGAGGTTCGTGGAATTCCAGGTGTAGGGGTG
+AAATCCGTAGATATCTGGAGGAACACCGGCGGCGAAAGCGACGAACTGGACCAACACTGACGCTGAGGCGCGAAAGCGTG
+GGGAGCAAACA
+"
+# Silva: 88.9% Bacteria;Proteobacteria;Deltaproteobacteria;Bradymonadales;
+# (Silva also has one hit to Desulfuromonadales)
+# NCBI Megablast: Many hits at 86% that match to
+# Bacteria; Proteobacteria; Deltaproteobacteria; Desulfuromonadales
+
+
+
+# Stranger Stramenopiles:
+
+# NOTE: When we removed c__Chloroplasts, we got rid of o__Stramenopiles.
+# But we can still get them from full16s
+inspect.o__Stramenopiles <- full16s %>%
+  merge_samples(group = "SampleType") %>%
+  psmelt() %>% filter(Rank4 == "o__Stramenopiles")
+inspect.o__Stramenopiles %>% head
+# Many OTUs, including OTU_1 are inside this order. I'm wondering if these are
+# just different chloroplasts...
+"
+>OTU_574
+GACGGAGGATGCAAGTGTTATCCGGAATCACTGGGCGTAAAGCGTCTGTAGGTGGTTTAATAAGTCAACTGTTAAATCTT
+GAAGCTCAACTTCAAAATCGCAGTCGAAACTATTAGACTAGAGTATAGTAGGGGTAAAGGGAATTTCCAGTGGAGCGGTG
+AAATGCGTAGAGATTGGAAAGAACACCGATGGCGAAGGCACTTTACTGGGCTATTACTGACACTCAGAGACGAAAGTGTG
+GGGAGCAAACA
+>OTU_148
+GACGGAGGATGCAAGTGTTATCCGGAATCACTGGGCGTAAAGCGTCTGTAGGTGGTTTAATAAGTCAACTGTTAAATCTT
+GAGGCTCAACCTCAAAATCGCAGTCGAAACTATTAGACTAGAGTATAGTAGGGGTAAAGGGAATTTCCAGTGGAGCGGTG
+AAATGCGTAGATATTGGAAGGAACACCGATGGCGAAGGCACTTTACTGGGCTATTTATTACTAACACTCAGAGACGAAAG
+CTAGGGTAGCA
+>OTU_1
+GACGGAGGATGCAAGTGTTATCCGGAATCACTGGGCGTAAAGCGTCTGTAGGTGGTTTAGTAAGTCAACTGTTAAATCTT
+GAAGCTCAACTTCAAAACCGCAGTCGAAACTATTAGACTAGAGTATAGTAGGGGTAAAGGGAATTTCCAGTGGAGCGGTG
+AAATGCGTAGAGATTGGAAAGAACACCGATGGCGAAGGCACTTTACTGGGCTATTACTGACACTCAGAGACGAAAGCTAG
+GGTAGCAAATG
+"
+# Silva: All hits 97% - 99% Bacteria;Cyanobacteria;Chloroplast;
+# ... Yep. Totally Chloroplasts.
+
+
+# Lake Tomatoes:
+
+# More searches with SILVA will help us understand if
+# "Charophyta, Solanales, Solanum" is really a Lake Tomato
+# https://en.wikipedia.org/wiki/Solanum
+
+# You say potato, I say over-identification. Let's find that taxa in our original, full data set.
+full18s %>%
+  subset_taxa(Rank4 == "D_3__Charophyta") %>%
+  plot_bar(fill = "Rank7", title = "Lake Tomatoes of Unusual Size")
+# Our 'tomatoes' are  flourishing. But what is their amplicon sequence?
+full18s %>% merge_samples(group = "SampleType") %>%
+  subset_taxa(Rank7 == "D_12__Solanum lycopersicum (tomato)") %>% psmelt %>% head
+
+# grep for OTU_16, 45 and 46
+"
+>OTU_16
+AAGTCATGGAAGCTGGCAGCGCCCGAAGTCGCCTCGAATCAGGGGTGCCCACGGTGAGGCTGGTGACTGGGACTAAGTCG
+TAACAAGGTAGCC
+>OTU_45
+ACACCATGGGAGTTGGCTTTACCCGAAGCCGGTGCGCTAACCGCAAGGAGGCAGCCGTCCACGGTAAGGTCAGCGACTGG
+GGTGAAGTCGTAACAAGGTAGCC
+>OTU_46
+ACACCATGGGAGTTGGCTCTACCCGAAGACGCTGTGCTAACCGCAAGGGGGCAGGCGGCCACGGTAGGGTCAGCGACTGG
+GGTGAAGTCGTAACAAGGTAGCC
+"
+# 45 and 46 are similar, while 16 is much shorter from a deletion in the first half.
+# My taxonomy annotation was based on a search of SILVA 18S, and returned hits
+# around 70%. A quick search of the 16S gene in SILVA returns hits above 94%
+# and a LCA tax of:
+# OTU_16 Bacteria;Planctomycetes;Phycisphaerae;Phycisphaerales;Phycisphaeraceae;
+# OTU_45 Bacteria;Proteobacteria;Alphaproteobacteria;
+# OTU_46 Bacteria;Proteobacteria;Alphaproteobacteria;Alphaproteobacteria Incertae Sedis;Unknown Family;
+
+# Given that we see some Planctomycetes lots Proteobacteria of, these are
+# probably off-target effects of the 18S primers, and not lake tomatoes after all.
+
+
+```
+
+
+
+
+
+
+
+
+
+## Modeling Ecological Diversity
+
+Here we make use of the methods implemented in the betapart and picante package
+and described in [this paper](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3498916/)
+by [James Stegen](https://scholar.google.com/citations?user=RpfOQ3MAAAAJ&hl=en).
+
+<https://cran.r-project.org/web/packages/betapart/betapart.pdf>
+<https://github.com/skembel/picante>
+
+The these packages don't like the `phyloseq::` data structures.
+So let's export phyloseq objects in a picante friendly way.
+
+
+```{r picante_new_functions, results="hide"}
+# This function does not export the taxonomy table
+# and does not include a trait table.
+setClass("ps.pic", representation(phy = "phylo", otu = "matrix"))
+
+phyloseq_to_picante <- function(psobject){
+  if(class(psobject) != "phyloseq") stop("Input must be a phyloseq object")
+  return(new("ps.pic", phy = psobject@phy_tree,
+        otu = if(psobject@otu_table@taxa_are_rows) t(psobject@otu_table) else psobject@otu_table
+    )
+  )
+}
+
+# This must be the worst S4 class ever constructed.
+
+
+# phyloseq_to_picante(glom.18s)@phy
+# phyloseq_to_picante(glom.18s)@otu %>% head
+# phyloseq_to_picante(glom.18s)@otu %>% class
+
+```
+
+
+
+
+
+
+
+
+## Nestedness vs Turnover
+
+Any differences between two samples can explained by either the loss of a shared
+species or the introduction of a unique species.
+(Beta diversity can be partitions into Nestedness and Turnover.)
+
+See [betapart: an R package for the study of beta diversity](http://onlinelibrary.wiley.com/doi/10.1111/j.2041-210X.2012.00224.x/full)
+and [the vignette (PDF)](https://cran.r-project.org/web/packages/betapart/betapart.pdf).
+
+```{r betapart-setup, fig.width=6, fig.height=5, warning=F, fig.show="hide"}
+# Export to picante
+
+# use full cohort...
+# rar.16s.cohort.ex <- rar.16s.cohort %>% phyloseq_to_picante
+# or remove otus that never appear...
+# rar.16s.cohort.ex <- rar.16s.cohort %>% filter_taxa(flist = function(x) max(x) > 0, prune = T) %>% phyloseq_to_picante # 2373 taxa
+# or remove singletons.
+rar.16s.cohort.ex <- rar.16s.cohort %>% filter_taxa(flist = function(x) sum(x) > 1, prune = T) %>% phyloseq_to_picante
+rar.18s.cohort.ex <- rar.18s.cohort %>% filter_taxa(flist = function(x) sum(x) > 1, prune = T) %>% phyloseq_to_picante
+
+# Convert to binary
+rar.16s.cohort.ex.b <- rar.16s.cohort.ex
+rar.16s.cohort.ex.b@otu[rar.16s.cohort.ex.b@otu > 0] = 1
+rar.18s.cohort.ex.b <- rar.18s.cohort.ex
+rar.18s.cohort.ex.b@otu[rar.18s.cohort.ex.b@otu > 0] = 1
+
+# merge both data sets
+# copy OTU table
+rar.both.ex <- rar.18s.cohort.ex.b@otu
+# rename OTUs
+taxa_names(rar.both.ex) <- rar.both.ex %>% taxa_names() %>% paste("18s", sep = "_")
+# merge, and save
+rar.both.ex <- merge_phyloseq_pair(rar.both.ex, rar.16s.cohort.ex.b@otu)
+
+
+rar.16s.cohort.ex.j <- beta.pair(rar.16s.cohort.ex.b@otu, index.family = "jaccard")
+rar.18s.cohort.ex.j <- beta.pair(rar.18s.cohort.ex.b@otu, index.family = "jaccard")
+rar.both.ex.j <- beta.pair(rar.both.ex, index.family = "jaccard")
+
+# $ beta.jtu is turnover, beta.jne is nestedness, beta.jac is combined Jaccard
+#rar.16s.cohort.ex.j$beta.jtu
+
+
+distmelt <- function(d){
+  d.melt <- d %>% as.matrix %>% as.data.frame %>% tibble::rownames_to_column() %>% melt()
+  d.melt$variable <- as.character(d.melt$variable)
+  return(d.melt[d.melt$variable > d.melt$rowname, ])
+}
+
+jaccard.melt <- rar.16s.cohort.ex.j$beta.jac %>% distmelt()
+turnover.melt <- rar.16s.cohort.ex.j$beta.jtu %>% distmelt()
+nestedness.melt <- rar.16s.cohort.ex.j$beta.jne %>% distmelt()
+
+jaccard.melt.18s <- rar.18s.cohort.ex.j$beta.jac %>% distmelt()
+turnover.melt.18s <- rar.18s.cohort.ex.j$beta.jtu %>% distmelt()
+nestedness.melt.18s <- rar.18s.cohort.ex.j$beta.jne %>% distmelt()
+
+jaccard.melt.both <- rar.both.ex.j$beta.jac %>% distmelt()
+turnover.melt.both <- rar.both.ex.j$beta.jtu %>% distmelt()
+nestedness.melt.both <- rar.both.ex.j$beta.jne %>% distmelt()
+
+
+# 16S
+# jaccard.melt %>% ggplot(aes(y = variable, x = rowname, fill = value)) + geom_raster()
+# turnover.melt %>% ggplot(aes(y = variable, x = rowname, fill = value)) + geom_raster()
+# nestedness.melt %>% ggplot(aes(y = variable, x = rowname, fill = value)) + geom_raster()
+# 18S
+# jaccard.melt.18s %>% ggplot(aes(y = variable, x = rowname, fill = value)) + geom_raster()
+# turnover.melt.18s %>% ggplot(aes(y = variable, x = rowname, fill = value)) + geom_raster()
+# nestedness.melt.18s %>% ggplot(aes(y = variable, x = rowname, fill = value)) + geom_raster()
+
+# Merge for combined graph
+jaccard.melt$Type <- "Total"
+turnover.melt$Type <- "Turnover"
+nestedness.melt$Type <- "Nestedness"
+all.melt <- rbind(jaccard.melt, turnover.melt, nestedness.melt)
+
+jaccard.melt.18s$Type <- "Total"
+turnover.melt.18s$Type <- "Turnover"
+nestedness.melt.18s$Type <- "Nestedness"
+all.melt.18s <- rbind(jaccard.melt.18s, turnover.melt.18s, nestedness.melt.18s)
+
+jaccard.melt.both$Type <- "Total"
+turnover.melt.both$Type <- "Turnover"
+nestedness.melt.both$Type <- "Nestedness"
+all.melt.both <- rbind(jaccard.melt.both, turnover.melt.both, nestedness.melt.both)
+
+```
+
+```{r batapart-graph, fig.width=10, fig.height=4, warning=F, include=F, eval=F}
+# These are without facets. Let's omit these in favor of the nicer ones.
+all.melt %>% ggplot(aes(y = variable, x = rowname, fill = value)) +
+  geom_raster() + facet_grid(~Type) +
+  theme(strip.background = element_blank())
+
+all.melt.18s %>% ggplot(aes(y = variable, x = rowname, fill = value)) +
+  geom_raster() + facet_grid(~Type) +
+  theme(strip.background = element_blank())
+
+all.melt.both %>% ggplot(aes(y = variable, x = rowname, fill = value)) +
+  geom_raster() + facet_grid(~Type) +
+  theme(strip.background = element_blank())
+
+```
+
+```{r batapart-graph2, fig.width=10, fig.height=4, warning=F, dev=c('png', 'pdf')}
+
+# Add columns listing the categories that the samples are in. Match them using grep.
+fix_rows <- function(df){
+
+  try(
+    # try() to add nice labels, but don't mentioned it if there is no $Type
+    df$Type <- factor(df$Type, levels = c("Total", "Nestedness", "Turnover")), silent = T
+  )
+
+  df$row_cat <- 1
+  df$row_cat[grepl("T2", df$rowname, fixed = T)] <- 8
+  df$row_cat[grepl("T3", df$rowname, fixed = T)] <- 14
+  df$row_cat[grepl("T4", df$rowname, fixed = T)] <- 35
+  df$row_cat[grepl("T5", df$rowname, fixed = T)] <- 56
+  df$row_cat[grepl("T6", df$rowname, fixed = T)] <- 79
+
+  df$var_cat <- 1
+  df$var_cat[grepl("T2", df$variable, fixed = T)] <- 8
+  df$var_cat[grepl("T3", df$variable, fixed = T)] <- 14
+  df$var_cat[grepl("T4", df$variable, fixed = T)] <- 35
+  df$var_cat[grepl("T5", df$variable, fixed = T)] <- 56
+  df$var_cat[grepl("T6", df$variable, fixed = T)] <- 79
+
+  df$var_cat <- factor(df$var_cat, levels = c(79,56,35,14,8))
+
+  return(df)
+}
+
+all.melt <- all.melt %>% fix_rows
+all.melt.18s <- all.melt.18s %>% fix_rows
+all.melt.both <- all.melt.both %>% fix_rows
+
+# Reverse this category so that it makes a nice triangle on the graph.
+all.melt$var_cat <- all.melt$var_cat %>% factor(levels = c(79,56,35,14,8))
+all.melt.18s$var_cat <- all.melt.18s$var_cat %>% factor(levels = c(79,56,35,14,8))
+all.melt.both$var_cat <- all.melt.both$var_cat %>% factor(levels = c(79,56,35,14,8))
+
+
+# Better combined graphs
+plot_dm <- function(df, ylab = "Sampling Day"){
+  return(
+    ggplot(df, aes(y = variable, x = rowname, fill = value)) + geom_raster() +
+      theme(strip.background = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks = element_blank(),
+            axis.title.x = element_blank(),
+            panel.grid = element_blank(),
+            panel.border = element_blank(),
+            legend.position = c(.95,.4)) +
+      labs(y = ylab, fill = "Binary \n Jaccard \nDistance") +
+      facet_grid(var_cat ~ Type + row_cat, scales = "free", switch = "y")
+  )
+}
+
+all.melt %>%
+  plot_dm(ylab = "Bacteria Sampling Day") +
+  scale_fill_viridis(limits=c(0,1))
+all.melt.18s %>%
+  plot_dm(ylab = "Eukaryotes Sampling Day") +
+  scale_fill_viridis(limits=c(0,1), option = "A") # I'm using magma, as plasma was to bright.
+all.melt.both %>%
+  plot_dm + scale_fill_continuous(low = "#222222", high = "#EEEEEE") # use grays for combined plot
+
+```
+
+```{r batapart-graph3, fig.width=5, fig.height=4, warning=F, eval=F, include=F}
+# This shows nestedness and turnover using a boxplot, instead of the distance matrix.
+all.melt %>% ggplot(aes(y = value, x = Type, color = Type)) + geom_boxplot() +
+  facet_grid(var_cat ~ row_cat) +
+  theme(axis.text.x = element_blank())
+
+# This stacked barplot adds up nestedness and turnover to equal total turnover.
+all.melt %>% filter(Type != "Total") %>%
+  group_by(Type, row_cat, var_cat) %>%
+  summarize(Jaccard = mean(value)) %>%
+  ggplot(aes(y = Jaccard, x = row_cat, fill = Type)) + geom_bar(stat = "identity") +
+  facet_grid(var_cat ~ row_cat, scales = "free_x") +
+  theme(axis.text.x = element_blank(), panel.grid = element_blank(), axis.title.x = element_blank())
+
+all.melt.18s %>% filter(Type != "Total") %>%
+  group_by(Type, row_cat, var_cat) %>%
+  summarize(Jaccard = mean(value)) %>%
+  ggplot(aes(y = Jaccard, x = row_cat, fill = Type)) + geom_bar(stat = "identity") +
+  facet_grid(var_cat ~ row_cat, scales = "free_x") +
+  theme(axis.text.x = element_blank(), panel.grid = element_blank(), axis.title.x = element_blank())
+
+
+```
+
+While these are not perfect visualizations, they are good reminders that we
+could compare the average between groups using ANOVA + Tukey test.
+
+
+
+### Jaccard notes
+
+- These are distance metrics:
+   - large means more different microbes
+- This partitioning works like a sum.
+   - Total Jaccard == Turnover + Nestedness
+   - `all.melt %>% filter(rowname == "T4.14", variable == "T4.19")`
+
+
+Questions:
+
+Let's use the `vegan::adonis` test to see how much variation of nestedness and
+turnover can be attributed to sampling day. Note that while Jaccard distances of
+nestedness add up to total Jaccard distance, these R2 values will not sum up.
+Rather, this qualitative measurement shows of if sampling day better correlates
+with nestedness or turnover.
+
+```{r betapart-tests}
+df = as(sample_data(rar.16s.cohort), "data.frame")
+day.16s <- rbind(
+adonis(rar.16s.cohort.ex.j$beta.jac ~ Day, df)$aov.tab %>% data.frame %>% filter(Df == "4") %>% data.frame(Microbe = "Bacteria", Type = "Total"), # Total .33
+adonis(rar.16s.cohort.ex.j$beta.jtu ~ Day, df)$aov.tab %>% data.frame %>% filter(Df == "4") %>% data.frame(Microbe = "Bacteria", Type = "Turnover"), # Turnover .19
+adonis(rar.16s.cohort.ex.j$beta.jne ~ Day, df)$aov.tab %>% data.frame %>% filter(Df == "4") %>% data.frame(Microbe = "Bacteria", Type = "Nestedness")# Nestedness .51
+)
+
+df = as(sample_data(rar.18s.cohort), "data.frame")
+day.18s <- rbind(
+adonis(rar.18s.cohort.ex.j$beta.jac ~ Day, df)$aov.tab %>% data.frame %>% filter(Df == "4") %>% data.frame(Microbe = "Eukaryotes", Type = "Total"), # Total .23
+adonis(rar.18s.cohort.ex.j$beta.jtu ~ Day, df)$aov.tab %>% data.frame %>% filter(Df == "4") %>% data.frame(Microbe = "Eukaryotes", Type = "Turnover"), # Turnover .25
+adonis(rar.18s.cohort.ex.j$beta.jne ~ Day, df)$aov.tab %>% data.frame %>% filter(Df == "4") %>% data.frame(Microbe = "Eukaryotes", Type = "Nestedness") # Nestedness .04
+)
+
+# We have to merge the sample_data from 16s and 18s to cover 'both'
+df <- df %>% rbind(as(sample_data(rar.16s.cohort), "data.frame"), as(sample_data(rar.18s.cohort), "data.frame")) %>% unique
+day.both <- rbind(
+adonis(rar.both.ex.j$beta.jac ~ Day, df)$aov.tab %>% data.frame %>% filter(Df == "4") %>% data.frame(Microbe = "Combined", Type = "Total"), # Total .23
+adonis(rar.both.ex.j$beta.jtu ~ Day, df)$aov.tab %>% data.frame %>% filter(Df == "4") %>% data.frame(Microbe = "Combined", Type = "Turnover"), # Turnover .25
+adonis(rar.both.ex.j$beta.jne ~ Day, df)$aov.tab %>% data.frame %>% filter(Df == "4") %>% data.frame(Microbe = "Combined", Type = "Nestedness") # Nestedness .04
+)
+
+rbind(day.16s, day.18s, day.both) %>% kable()
+
+```
+
+
+
+
+
+
+## More Nestedness and Turnover
+
+How do we measure the priority effects of the Founder Species?
+
+- If the founder species exert a priority effect, community structure will be
+defined by the founders. The final community will be a nested subset of the
+previously observe microbes.
+- If the founder species cannot / do not exert a priority effect, community
+structure will be defined by introduced microbes. Turnover will have forced the
+founders out and the final community will be distinct from previously observed
+microbes.
+
+**Nestedness indicates a priority effect.**
+
+We already measured this with betapart, but we want a metric which is super simple.
+
+In this section, we will count how many microbes appear at a timepoint that
+were not in any previous timepoint. We will divide that by the total number of
+microbes seen so far, to get a metric showing 'percent new microbes' which is
+equal to turnover / dispersion.
+
+> "Counting is the hardest part of Bioinformatics" - Lee Ann McCue
+
+Related concepts:
+- alpha rarefaction asks 'by what read depth are no new microbes introduced'
+  while we are asking 'by what sampling time are no new microbes introduced'.
+- This is the finite difference of cumulative alpha diversity over time
+- This is the first derivative of gamma diversity over time
+
+
+```{r counting-new-microbes}
+# First, merge by day
+rar.16s.cohort.day <- merge_samples(rar.16s.cohort, group = "Day")
+
+total.taxa <- data.frame(Day = factor(c("Day 8", "Day 14", "Day 35", "Day 56", "Day 79"),
+                                      levels = c("Day 8", "Day 14", "Day 35", "Day 56", "Day 79")))
+
+total.taxa$`Total OTUs` <- c(
+subset_samples(rar.16s.cohort.day, Day %in% 1) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa(),
+subset_samples(rar.16s.cohort.day, Day %in% 1:2) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa(),
+subset_samples(rar.16s.cohort.day, Day %in% 1:3) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa(),
+subset_samples(rar.16s.cohort.day, Day %in% 1:4) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa(),
+subset_samples(rar.16s.cohort.day, Day %in% 1:5) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa()
+)
+
+# sanity check
+rar.16s.cohort.day %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa() # Good. We got all 5 days.
+subset_samples(rar.16s.cohort.day, Day %in% 1) %>% estimate_richness() # We are reporting all Observed OTUs.
+rar.16s.cohort.day %>% ntaxa # and the difference between our count and the total...
+rar.16s.cohort.day %>% taxa_sums() %>% table %>% head # ... is equal to the number of 0s in our table
+
+total.taxa$`New OTUs` <- total.taxa$`Total OTUs` - lag(total.taxa$`Total OTUs`)
+#total.taxa
+
+# 18s
+rar.18s.cohort.day <- merge_samples(rar.18s.cohort, group = "Day")
+
+total.euks <- data.frame(Day = factor(c("Day 8", "Day 14", "Day 35", "Day 56", "Day 79"),
+                                      levels = c("Day 8", "Day 14", "Day 35", "Day 56", "Day 79")))
+
+total.euks$`Total OTUs` <- c(
+subset_samples(rar.18s.cohort.day, Day %in% 1) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa(),
+subset_samples(rar.18s.cohort.day, Day %in% 1:2) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa(),
+subset_samples(rar.18s.cohort.day, Day %in% 1:3) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa(),
+subset_samples(rar.18s.cohort.day, Day %in% 1:4) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa(),
+subset_samples(rar.18s.cohort.day, Day %in% 1:5) %>% filter_taxa(function(x) max(x) > 0, TRUE) %>% ntaxa()
+)
+
+total.euks$`New OTUs` <- total.euks$`Total OTUs` - lag(total.euks$`Total OTUs`)
+total.euks
+
+
+# Combined
+total.combined <- data.frame(Day = factor(c("Day 8", "Day 14", "Day 35", "Day 56", "Day 79"),
+                                      levels = c("Day 8", "Day 14", "Day 35", "Day 56", "Day 79")))
+
+total.combined$`Total OTUs` <- total.taxa$`Total OTUs` + total.euks$`Total OTUs`
+total.combined$`New OTUs` <- total.taxa$`New OTUs` + total.euks$`New OTUs`
+
+total.combined$Type <- "Combined"
+total.taxa$Type <- "Bacteria"
+total.euks$Type <- "Eukaryotes"
+
+total.all <- rbind(total.combined, total.taxa, total.euks)
+
+# Replace NA (all OTUs are new at the first timepoint)
+total.all$`New OTUs`[is.na(total.all$`New OTUs`)] <- total.all$`Total OTUs`[is.na(total.all$`New OTUs`)]
+
+# calculate observed turnover
+total.all$`Percent New OTUs` <- total.all$`New OTUs` / total.all$`Total OTUs`
+
+```
+
+```{r graphing-new-microbes, fig.width=8, fig.height=2, dev=c('png', 'pdf')}
+# reorder levels
+total.all$Type <- total.all$Type %>% factor(levels = c("Bacteria", "Eukaryotes", "Combined"))
+
+# rename variables
+total.all$`Sum of all observed OTUs` <- total.all$`Total OTUs`
+total.all$`Sum of previously unobserved OTUs` <- total.all$`New OTUs`
+total.all$`Fraction of community composed of\npreviously unobserved OTUs ` <- total.all$`Percent New OTUs`
+
+# Optional: remove old variables
+total.all$`Total OTUs` <- NULL
+total.all$`New OTUs` <- NULL
+total.all$`Percent New OTUs` <- NULL
+
+total.all.m <- melt(total.all)
+
+total.all.m$variable <- factor(total.all.m$variable, levels = levels(total.all.m$variable)[c(3,2,1)])
+
+total.all.m %>%
+  ggplot(aes(x = Day, y = value, color = Type)) +
+  geom_point(alpha = .9) +
+  geom_line(aes(group = Type), size = 1, alpha = .5) +
+  facet_wrap(~variable, scales = "free_y") +
+  #scale_color_manual(values = c("#5DC863", "#B52F8C", "#777777")) +
+  scale_color_manual(values = c("#6DCD59", "#9F2F7FFF", "#777777")) +
+  theme(axis.title = element_blank(),
+#        legend.position = c(.92,.6), # legend in the left panel
+        legend.position = c(.22,.62), # legend in the right panel
+        legend.title = element_blank()
+        #, panel.spacing.x = unit(30, "pt") # add spacing between plots for equations
+        )
+
+# viridis(10, option = "D")[8]
+# viridis(10, option = "A")[5]
+
+total.all.m %>% filter(Type == "Combined", Day == "Day 56")
+```
+
+
+
+
+
+
+
+## Beta NTI
+
+Are the selective pressures resulting in nestedness and turnover related to
+phylogenetic composition / functional niche of the microbes? Beta NTI shows us
+if phylogenetic turnover is caused by niche-based processes.
+
+The following code was provided by [Emily B. Graham](https://scholar.google.com/citations?user=k2gNkOoAAAAJ&hl=en)
+and used with her guidance and permission. We have modified it slightly. It is
+related to script from James Stegen's script from ISME 2013, which is
+[available on GitHub](https://github.com/stegen/Stegen_etal_ISME_2013/blob/master/bNTI_Local_Machine.r).
+
+```{r beta-nti-emily, message=F, results='hide'}
+
+run_beta_nti <- function(phylo, otu, reps = 999){
+  #phylo is phylogentic tree
+  #otu is otu matrix
+  match.phylo.otu.trim = match.phylo.data(phylo, t(otu))#trims tree to only otus in otu table
+
+  beta.type = 'bNTI';#set to calculate bNTI
+  beta.reps = reps;#set reps
+
+  emp.weighted.neighbor.trim =
+    as.matrix(comdistnt(t(match.phylo.otu.trim$data),
+                      cophenetic(match.phylo.otu.trim$phy),
+                      abundance.weighted=T,
+                      exclude.conspecifics = F))
+  ## empirical mean neighbor
+  #print(emp.weighted.neighbor.trim)
+
+
+  rand.weighted.neighbor.comp.trim =
+    array(c(-999), dim=c(nrow(otu), nrow(otu), beta.reps))
+  #print(dim(rand.weighted.neighbor.comp.trim))
+
+  for (b.rep in 1:beta.reps) {
+      rand.weighted.neighbor.comp.trim[,,b.rep] =
+        as.matrix(comdistnt(t(match.phylo.otu.trim$data),
+                            taxaShuffle(cophenetic(match.phylo.otu.trim$phy)),
+                            abundance.weighted=T, exclude.conspecifics = F))
+    print(c(b.rep, date()))
+  }
+
+  #lapply version of the above loop
+  # lapply(1:beta.reps, function(b.rep){
+  #   rand.weighted.neighbor.comp.trim[,,b.rep] =
+  #     as.matrix(comdistnt(t(match.phylo.otu.trim$data),
+  #                         taxaShuffle(cophenetic(match.phylo.otu.trim$phy)),
+  #                         abundance.weighted=T, exclude.conspecifics = F))
+  #   print(c(b.rep, date()))
+  # })
+
+  #print(rand.weighted.neighbor.comp.trim)
+
+  ses.weighted.neighbor.trim = matrix(c(NA),nrow=nrow(otu),ncol=nrow(otu));
+
+  for (columns in 1:(nrow(otu)-1)) {
+    for (rows in (columns+1):nrow(otu)) {
+
+      rand.vals = rand.weighted.neighbor.comp.trim[rows,columns,];
+      ses.weighted.neighbor.trim[rows,columns] = (emp.weighted.neighbor.trim[rows,columns] - mean(rand.vals)) / sd(rand.vals);
+      rm("rand.vals");
+
+    };
+  };
+
+  rownames(ses.weighted.neighbor.trim) = rownames(otu)
+  colnames(ses.weighted.neighbor.trim) = rownames(otu)
+
+  print(ses.weighted.neighbor.trim[1:5, 1:5])
+  return(ses.weighted.neighbor.trim)
+
+}
+
+# We will export these again, this time without filtering for singletons
+rar.16s.cohort.ex <- rar.16s.cohort %>% filter_taxa(flist = function(x) max(x) > 0, prune = T) %>% phyloseq_to_picante # 2373 taxa
+
+rar.16s.cohort.bnti <- run_beta_nti(rar.16s.cohort.ex@phy, rar.16s.cohort.ex@otu, 99)
+
+rar.16s.cohort.bnti %>% write.csv("rar.16s.cohort.bnti.csv", F, F, row.names = T, col.names = T)
+
+```
+
+Repeat this for 18S.
+
+
+```{r beta-nti-18s, results='hide', message=F}
+# We will export these again, this time without filtering for singletons
+rar.18s.cohort.ex <- rar.18s.cohort %>% filter_taxa(flist = function(x) max(x) > 0, prune = T) %>% phyloseq_to_picante # 2373 taxa
+
+rar.18s.cohort.bnti <- run_beta_nti(rar.18s.cohort.ex@phy, rar.18s.cohort.ex@otu, 99)
+
+rar.18s.cohort.bnti[20:25,20:25]
+
+rar.18s.cohort.bnti %>% write.csv("rar.18s.cohort.bnti.csv", F, F, row.names = T, col.names = T)
+
+```
+
+beta NTI graphs for 16s
+
+```{r beta-nti-test-16s, warning=F, fig.width=6}
+rar.16s.cohort.bnti <- read.csv("rar.16s.cohort.bnti.csv", row.names = 1)
+
+rar.16s.cohort.bnti[20:25,20:25]
+
+rar.16s.cohort.bnti.melt <- rar.16s.cohort.bnti %>% as.dist() %>% distmelt() %>% fix_rows()
+rar.16s.cohort.bnti.melt$Type <- "16S"
+
+rar.16s.cohort.bnti.melt %>% arrange(-value) %>% head
+
+rar.16s.cohort.bnti.melt %>%
+  ggplot(aes(y = variable, x = rowname, fill = value)) + geom_raster() +
+  theme(strip.background = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        legend.position = c(.95,.4)) +
+  labs(y = "Sampling Day", fill = "beta NTI") +
+  facet_grid(var_cat ~ Type + row_cat, scales = "free", switch = "y") +
+  scale_fill_gradient2(limits = c(-6, 6))
+
+# This shows low turnover, just like we have already shown.
+```
+
+beta NTI graphs for 18s
+
+```{r beta-nti-test-18s, eval=T, include=T, fig.width=6}
+rar.18s.cohort.bnti <- read.csv("rar.18s.cohort.bnti.csv", row.names = 1)
+rar.18s.cohort.bnti.melt <- rar.18s.cohort.bnti %>% as.dist() %>% distmelt() %>% fix_rows()
+
+rar.18s.cohort.bnti.melt$Type <- "18S"
+
+rar.18s.cohort.bnti.melt %>% arrange(abs(value)) %>% tail
+
+rar.18s.cohort.bnti.melt %>%
+  ggplot(aes(y = variable, x = rowname, fill = value)) + geom_raster() +
+  theme(strip.background = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        legend.position = c(.95,.4)) +
+  labs(y = "Sampling Day", fill = "beta NTI") +
+  facet_grid(var_cat ~ Type + row_cat, scales = "free", switch = "y") +
+  scale_fill_gradient2(limits = c(-6, 6))
+
+```
+
+## Within-sample BetaNTI plot
+
+Part of the nestedness / turnover figure.
+
+```{r beta-nti-combined-figure, warning=F, fig.width=4, fig.height=3, dev=c('png', 'pdf')}
+rar.16s.cohort.bnti.melt$microbe <- "16S"
+rar.18s.cohort.bnti.melt$microbe <- "18S"
+bnti.melt <- rbind(rar.16s.cohort.bnti.melt, rar.18s.cohort.bnti.melt)
+
+bnti.melt %>% filter(row_cat == var_cat) %>% dplyr::select(value) %>% summary
+
+bnti.melt %>% filter(microbe == "16S" & row_cat == var_cat) %>%
+  ggplot(aes(y = value, x = as.numeric(as.character(var_cat)))) +
+  geom_hline(yintercept = c(0, 2, -2), color = "blue", alpha = 0.6) +
+  geom_boxplot(aes(group = var_cat), outlier.alpha = 0) + geom_jitter(width = .5, alpha = .1) +
+  geom_smooth(color = "#6DCD59", method = "lm", size = 1, se = F) +
+  #facet_grid(~microbe) +
+  labs(x = "Bacteria Sampling Day", y = "BetaNTI") +
+  scale_y_continuous(limits = c(-6, 9)) +
+  theme(strip.background = element_blank())
+
+bnti.melt %>% filter(microbe == "18S" & row_cat == var_cat) %>%
+  ggplot(aes(y = value, x = as.numeric(as.character(var_cat)))) +
+  geom_hline(yintercept = c(0, 2, -2), color = "blue", alpha = 0.6) +
+  geom_boxplot(aes(group = var_cat), outlier.alpha = 0) + geom_jitter(width = .5, alpha = .1) +
+  geom_smooth(color = "#9F2F7F", method = "lm", size = 1, se = F) +
+  #facet_grid(~microbe) +
+  labs(x = "Eukaryotes Sampling Day", y = "BetaNTI") +
+  scale_y_continuous(limits = c(-6, 9)) +
+  theme(strip.background = element_blank())
+
+```
+
+GLM, with with all vs all pairwise post-hoc Tukey test
+
+```{r beta-nti-combined-test, warning=F}
+bnti.melt %>%
+  filter(microbe == "16S" & row_cat == var_cat) %>%
+  glm(value ~ var_cat, "gaussian", .) %>%
+  glht(linfct = mcp(var_cat = "Tukey")) %>%
+  summary %>% tidy %>% kable
+
+bnti.melt %>%
+  filter(microbe == "18S" & row_cat == var_cat) %>%
+  glm(value ~ var_cat, "gaussian", .) %>%
+  glht(linfct = mcp(var_cat = "Tukey")) %>%
+  summary %>% tidy %>% kable
+
+```
+
+
+### BetaNTI vs our founders species
+
+For each of our Founders Species, let's see how their mean abundances changes
+with betaNTI. A positive slope (high abundance with high betaNTI), means that
+the microbe is most successful in a stochastic, high turnover environment. A
+negative slope (high abundance with negative betaNTI), means that the microbe is
+most successful in a stable environment with low turnover.
+
+```{r beta-nti-vs-founders, fig.width=10, fig.height=10}
+# It turns out that getting the mean values from all pairs in a vector is
+# really hard. Here is the solution I like. This is stylistically dplyr / TidyR
+
+# select.16s.melt is our starting object, which is the founders species from the
+# line plots, melted into a data frame.
+# select.16s.melt %>% head
+
+# First, we will group_by to denote that each sample appears once for each microbe,
+# then we will select the Sample, Abundance, and (implicitly) the Taxonomy columns.
+s.a.16s <- select.16s.melt %>% group_by(Taxonomy) %>% dplyr::select(Sample1 = Sample, Abundance)
+s.a.16s
+# Look at that! It's now a tibble, and also we renamed the Sample to Sample1
+
+# Let's a make a copy of this object...
+s.a.16s.dup <- s.a.16s
+names(s.a.16s.dup) <- c("Taxonomy", "Sample2", "Abundance2")
+# ... and also rename these to Sample2 and Abidance2.
+
+select.16s.mean <-
+  s.a.16s %>%
+  expand(Sample1, Sample2 = Sample1) %>% # generate all pairs of sample1 (but save the second pair as sample2!!!)
+  inner_join(s.a.16s) %>%        # join in Abundance for Sample1
+  inner_join(s.a.16s.dup) %>%    # join in Abundance2 for Sample2
+  mutate(abmean = (Abundance + Abundance2) / 2 ) %>% # calculate the mean of these two values.
+  dplyr::select(Taxonomy, rowname = Sample1, variable = Sample2, abmean) # drop extra columns and rename
+
+select.16s.mean
+# Admire that it worked. Thank you Hadley.
+
+# Repeat for 18S
+s.a.18s <- select.18s.melt %>% group_by(Taxonomy) %>% dplyr::select(Sample1 = Sample, Abundance)
+
+s.a.18s.dup <- s.a.18s
+names(s.a.18s.dup) <- c("Taxonomy", "Sample2", "Abundance2")
+
+select.18s.mean <-
+  s.a.18s %>%
+  expand(Sample1, Sample2 = Sample1) %>% # generate all pairs of sample1 (but save the second pair as sample2!!!)
+  inner_join(s.a.18s) %>%        # join in Abundance for Sample1
+  inner_join(s.a.18s.dup) %>%    # join in Abundance2 for Sample2
+  mutate(abmean = (Abundance + Abundance2) / 2 ) %>% # calculate the mean of these two values.
+  dplyr::select(Taxonomy, rowname = Sample1, variable = Sample2, abmean) # drop extra columns and rename
+# 18S is done!
+
+```
+
+```{r beta-nti-vs-founders.line0, fig.width=10, fig.height=10, include=F, eval=F}
+# Combine with betaNTI data and graph.
+select.16s.mean %>% left_join(bnti.melt) %>%
+  ggplot(aes(x = abmean, y = value)) +
+  geom_point() + geom_smooth(method = "lm") +
+  facet_wrap(~Taxonomy, nrow = 3) +
+  labs(x = "mean relative abundance", y = "betaNTI", title = "16: All Samples")
+
+# Same graph, but only within the same day.
+select.16s.mean %>% left_join(bnti.melt) %>%
+  filter(row_cat == var_cat) %>%
+  ggplot(aes(x = abmean, y = value)) +
+  geom_point() + geom_smooth(method = "lm") +
+  facet_wrap(~Taxonomy, nrow = 3) +
+  labs(x = "mean relative abundance", y = "betaNTI", title = "16S: Within each timepoint")
+
+```
+
+
+```{r beta-nti-vs-founders.line1, fig.width=8, fig.height=14, include=F, eval=F}
+# Only within the same day and also faceted by day
+select.16s.mean.subset <- select.16s.mean %>% left_join(bnti.melt) %>%
+  filter(row_cat == var_cat)
+
+# Full plot
+select.16s.mean.subset %>%
+  ggplot(aes(x = value, y = abmean)) +
+  geom_point() + geom_smooth(method = "lm") +
+  facet_wrap(~Taxonomy + row_cat, ncol = 5) +
+  labs(x = "betaNTI", y = "mean relative abundance", title = "16S: Within each timepoint")
+
+```
+
+The 'median of mean' is really inelegant. The fact that each point represents
+a _pair_ of samples is super strange.
+
+Let's recalculate the median RA so it's simple and it matches the line graphs better.
+
+
+```{r beta-nti-vs-founders.line3-16s, fig.width=7.5, fig.height=10, dev=c('png', 'pdf')}
+# Subset and summarize betaNTI
+select.16s.bNTImed <- select.16s.mean %>%
+  left_join(bnti.melt) %>%
+  filter(row_cat == var_cat) %>%
+  group_by(Taxonomy, Day = factor(row_cat)) %>%
+  summarise(betaNTImedian = median(value))
+
+# Subset and summarize abundance
+select.16s.abmed <- select.16s.melt %>%
+  group_by(Taxonomy, Day) %>%
+  summarise(AbundanceMedian = median(Abundance))
+
+# Merge and graph
+inner_join(select.16s.bNTImed, select.16s.abmed) %>%
+  ggplot(aes(betaNTImedian, AbundanceMedian, label = Day)) +
+  geom_vline(xintercept = 0, color = "red", alpha = 0.2) +
+  geom_point() + geom_smooth(method = "lm") +
+  geom_label(nudge_y = 0.2) +
+  facet_wrap(~Taxonomy, ncol = 2) +
+  labs(x = "median betaNTI", y = "median relative abundances") #, title = "16S: Within each timepoint")
+
+# Stat test on slope
+inner_join(select.16s.bNTImed, select.16s.abmed) %>%
+  do(tidy(lm(data = ., AbundanceMedian ~ betaNTImedian))) %>%
+  filter(term == "betaNTImedian") %>% kable()
+
+```
+
+
+
+```{r beta-nti-vs-founders.line3-18s, fig.width=7.5, fig.height=7.5, dev=c('png', 'pdf')}
+# Subset and summarize betaNTI
+select.18s.bNTImed <- select.18s.mean %>%
+  left_join(bnti.melt) %>%
+  filter(row_cat == var_cat) %>%
+  group_by(Taxonomy, Day = factor(row_cat)) %>%
+  summarise(betaNTImedian = median(value))
+
+# Subset and summarize abundance
+select.18s.abmed <- select.18s.melt %>%
+  group_by(Taxonomy, Day) %>%
+  summarise(AbundanceMedian = median(Abundance))
+
+# Merge and graph
+inner_join(select.18s.bNTImed, select.18s.abmed) %>%
+  ggplot(aes(betaNTImedian, AbundanceMedian, label = Day)) +
+  geom_vline(xintercept = 0, color = "red", alpha = 0.2) +
+  geom_point() + geom_smooth(method = "lm") +
+  geom_label(nudge_y = 0.2) +
+  facet_wrap(~Taxonomy, ncol = 2) +
+  labs(x = "median betaNTI", y = "median relative abundances") #, title = "18S: Within each timepoint")
+
+# Stat test on slope
+inner_join(select.18s.bNTImed, select.18s.abmed) %>%
+  do(tidy(lm(data = ., AbundanceMedian ~ betaNTImedian))) %>%
+  filter(term == "betaNTImedian") %>% kable()
+
+```
+
+
+```{r, cache=F, eval=T, include=F}
+#Save and exit.
+knitr::knit_exit()
+
+```
