@@ -1,0 +1,12 @@
+vsearch v2.0.2_linux_x86_64, 62.8GB RAM, 48 cores
+vsearch -derep_fulllength /people/bris469/data/hans_fsfa/split/seqs.fna.gz --sizeout --relabel derep_ --minuniquesize 2 --output seqs.derep.mc2.fna --log seqs.derep.mc2.log 
+Started  Tue Aug 16 13:47:59 20161357411514 nt in 5408014 seqs, min 251, max 251, avg 251
+
+783238 unique sequences, avg cluster 6.9, median 1, max 456804
+
+173472 uniques written, 609766 clusters discarded (77.9%)
+
+
+Finished Tue Aug 16 13:49:37 2016
+Elapsed time 01:38
+Max memory 1.8GB

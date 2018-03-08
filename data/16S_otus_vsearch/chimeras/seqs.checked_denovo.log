@@ -1,0 +1,17 @@
+vsearch v2.0.2_linux_x86_64, 62.8GB RAM, 48 cores
+vsearch --uchime_denovo seqs.derep.mc2.fna --strand plus --sizein --sizeout --nonchimeras chimeras/seqs.checked_denovo.fna --log chimeras/seqs.checked_denovo.log 
+Started  Tue Aug 16 13:49:37 201643541472 nt in 173472 seqs, min 251, max 251, avg 251
+
+    0.28  minh
+    8.00  xn
+    1.40  dn
+    1.00  xa
+    0.80  mindiv
+    0.55  id
+       2  maxp
+
+seqs.derep.mc2.fna: 23560/173472 chimeras (13.6%)
+
+Finished Tue Aug 16 14:02:40 2016
+Elapsed time 13:03
+Max memory 137.3MB

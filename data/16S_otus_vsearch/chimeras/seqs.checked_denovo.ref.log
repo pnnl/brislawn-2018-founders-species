@@ -1,0 +1,17 @@
+vsearch v2.0.2_linux_x86_64, 62.8GB RAM, 48 cores
+vsearch --uchime_ref chimeras/seqs.checked_denovo.fna --db ../rdp_gold.fa --threads 8 --nonchimeras chimeras/seqs.checked_denovo.ref.fna --log chimeras/seqs.checked_denovo.ref.log 
+Started  Tue Aug 16 14:02:40 201629007378 nt in 20098 seqs, min 320, max 2210, avg 1443
+
+    0.28  minh
+    8.00  xn
+    1.40  dn
+    1.00  xa
+    0.80  mindiv
+    0.55  id
+       2  maxp
+
+chimeras/seqs.checked_denovo.fna: 3758/148710 chimeras (2.5%)
+
+Finished Tue Aug 16 14:04:32 2016
+Elapsed time 01:52
+Max memory 187.7MB

@@ -1,0 +1,22 @@
+vsearch v2.0.2_linux_x86_64, 62.8GB RAM, 48 cores
+vsearch --cluster_smallmem seqs.checked_denovo.fna --threads 10 --id 0.97 --centroids rep_set.fna --log rep_set.log --sizein --xsize --usersort --relabel OTU_ 
+Started  Fri Sep 16 16:16:56 20168649011 nt in 74380 seqs, min 80, max 367, avg 116
+
+
+      Alphabet  nt
+    Word width  8
+     Word ones  8
+        Spaced  No
+        Hashed  No
+         Coded  No
+       Stepped  No
+         Slots  65536 (65.5k)
+       DBAccel  100%
+
+Clusters: 3308 Size min 2, max 1450394, avg 22.5
+Singletons: 0, 0.0% of seqs, 0.0% of clusters
+
+
+Finished Fri Sep 16 16:17:02 2016
+Elapsed time 00:06
+Max memory 43.8MB
