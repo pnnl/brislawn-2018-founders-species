@@ -11,3 +11,7 @@ This contains the processed 18S data. It's in the same format as the 16S data.
 ### Raw data
 
 Genetic sequencing data is available on OSF for both [16S and 18S amplicons](https://osf.io/a48vj/).
+
+### metadata.txt
+
+A tab separated file, listing the name and biological context of each sample.
