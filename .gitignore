@@ -1,0 +1,14 @@
+# OS stuff
+desktop.ini
+.DS_Store
+Icon?
+Thumbs.db
+
+# R stuff
+.Rhistory
+.RData
+.Rprofile
+
+# knitr and R markdown cache and output (keep actual .pdf or .html outputs)
+*_cache
+*_files
