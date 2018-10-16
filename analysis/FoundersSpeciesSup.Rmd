@@ -71,12 +71,12 @@ stats simpler.)
 meta <- import_qiime_sample_data(file.path('../data/metadata.txt'))
 
 
-no_meta <- import_biom(file.path('../data/16S_otus_vsearch/otu_table_w_tax.biom'),
+no_meta <- import_biom(file.path('../data/16S_otus_vsearch/otu_table_w_tax_silva.biom'),
                        file.path('../data/16S_otus_vsearch/rep_set.tre'))
 full16s <- merge_phyloseq(meta, no_meta)
 full16s
 
-no_meta_18s <- import_biom(file.path('../data/18S_otus_vsearch/otu_table_w_tax.biom'),
+no_meta_18s <- import_biom(file.path('../data/18S_otus_vsearch/otu_table_w_tax_silva.biom'),
                            file.path('../data/18S_otus_vsearch/rep_set.tre'))
 full18s <- merge_phyloseq(meta, no_meta_18s)
 full18s
@@ -115,22 +115,21 @@ successfully sequenced. Day 8 will be the initial day analyzed.
 #### 16S
 
 ```{r preprocess16s, include=T}
-
-filtered16s <- subset_taxa(full16s, Rank1 == "k__Bacteria")
+filtered16s <- subset_taxa(full16s, Rank1 == "D_0__Bacteria")
 ntaxa(filtered16s) / ntaxa(full16s)
 sum(taxa_sums(filtered16s)) / sum(taxa_sums(full16s))
 
 # What taxa are being removed in this filter?
-full16s %>% subset_taxa(Rank1 != "k__Bacteria") %>% tax_table %>% data.frame %>% select_("Rank1") %>% table
+full16s %>% subset_taxa(Rank1 != "D_0__Bacteria") %>% tax_table %>% data.frame %>% select_("Rank1") %>% table
 # Mostly Archaea and Unassigned microbes.
 
-filtered16s <- subset_taxa(filtered16s, !(Rank5 %in% c("f__mitochondria", "f__chloroplast")))
-ntaxa(filtered16s) / ntaxa(full16s)
+filtered16s <- subset_taxa(filtered16s, Rank5 != "D_4__Mitochondria")
+ntaxa(filtered16s) / ntaxa(full16s) # about 4% are mirochondria
 sum(taxa_sums(filtered16s)) / sum(taxa_sums(full16s))
 
 # Just to be sure, let's also filter at the class level.
-filtered16s <- subset_taxa(filtered16s, Rank3 != "c__Chloroplast")
-ntaxa(filtered16s) / ntaxa(full16s)
+filtered16s <- subset_taxa(filtered16s, Rank4 != "D_3__Chloroplast")
+ntaxa(filtered16s) / ntaxa(full16s) # another 2% are chloroplast
 sum(taxa_sums(filtered16s)) / sum(taxa_sums(full16s))
 # Lot's of c__Chloroplast in these samples!
 
@@ -154,17 +153,31 @@ rar.16s.cohort
 are used.
 
 ```{r preprocess18s, include=T}
-# Remove 'tomatoes' (actually from two types of bacteria).
-
-badTaxa <- full18s %>% subset_taxa(Rank7 == "D_12__Solanum lycopersicum (tomato)") %>% taxa_names
-allTaxa <- taxa_names(full18s)
-keepTaxa <- allTaxa[!(allTaxa %in% badTaxa)]
-
-filtered18s <- prune_taxa(keepTaxa, full18s)
-
-ntaxa(filtered18s) / ntaxa(full18s)
+filtered18s <- subset_taxa(full18s, Rank1 %in% c("D_0__Archaea", "D_0__Eukaryota"))
+ntaxa(filtered18s) / ntaxa(full18s) # these 18S primers amplify lots of bacteria, but that's expected
 sum(taxa_sums(filtered18s)) / sum(taxa_sums(full18s))
 
+# Now that we are using a unified database, also filter Mitochondria and
+# chloroplasts on the 18S amplicons
+
+filtered18s <- subset_taxa(filtered18s, Rank5 != "D_4__Mitochondria")
+ntaxa(filtered18s) / ntaxa(full18s) # more than 25% of OTUs are mitochondria
+sum(taxa_sums(filtered18s)) / sum(taxa_sums(full18s)) # but < 4% of reads
+
+filtered18s <- subset_taxa(filtered18s, Rank4 != "D_3__Chloroplast")
+ntaxa(filtered18s) / ntaxa(full18s) # < 0.1% are chloroplast
+sum(taxa_sums(filtered18s)) / sum(taxa_sums(full18s))
+
+# Remove 'tomatoes' (actually from two types of bacteria).
+
+# badTaxa <- full18s %>% subset_taxa(Rank7 == "D_12__Solanum lycopersicum (tomato)") %>% taxa_names
+# allTaxa <- taxa_names(full18s)
+# keepTaxa <- allTaxa[!(allTaxa %in% badTaxa)]
+
+# filtered18s <- prune_taxa(keepTaxa, full18s)
+
+# ntaxa(filtered18s) / ntaxa(full18s)
+# sum(taxa_sums(filtered18s)) / sum(taxa_sums(full18s))
 
 
 plot(sort(sample_sums(filtered18s)))
@@ -437,7 +450,7 @@ alpha.both.alt <- plot_grid(alpha.16s.alt, alpha.18s.alt,
                         #labels = c("A", "B"),
                         align = "h", nrow = 1, rel_widths = c(1.1, 1))
 alpha.both.alt
-ggsave("./figures/alpha.both.pdf", alpha.both.alt, scale = 1.3, width = 89, height = 77, units = "mm")
+#ggsave("./figures/alpha.both.pdf", alpha.both.alt, scale = 1.3, width = 89, height = 77, units = "mm")
 
 
 ```
@@ -526,6 +539,10 @@ sample_data(cohort.merged)$Day <- as.numeric(sample_names(cohort.merged))
 glom <- tax_glom(cohort.merged, taxrank = "Rank2")
 glom <- transform_sample_counts(glom, function(x) x / sum(x))
 
+prune_taxa(names(sort(taxa_sums(glom), TRUE))[0:11], glom) %>% psmelt() %>%
+  group_by(OTU, Rank2) %>% summarize(mean = mean(Abundance)) %>% arrange(-mean) %>%
+  kable()
+
 # Select top Phyla
 glom.top <- prune_taxa(names(sort(taxa_sums(glom), TRUE))[0:7], glom)
 sum(taxa_sums(glom.top)) / sum(taxa_sums(glom))
@@ -533,7 +550,7 @@ sum(taxa_sums(glom.top)) / sum(taxa_sums(glom))
 # Melt for graphing and strip prefix
 glom.top.melt <- psmelt(glom.top)
 glom.top.melt <- arrange(glom.top.melt, Day, Rank2)
-glom.top.melt$Phylum <- gsub('p__', '', glom.top.melt$Rank2)
+glom.top.melt$Phylum <- gsub('D_1__', '', glom.top.melt$Rank2)
 
 # Graph
 glom.top.gg <- ggplot(glom.top.melt, aes(x = as.numeric(Day), y = Abundance, fill = Phylum))
@@ -561,6 +578,10 @@ sample_data(cohort.merged18s)$Day <- as.numeric(sample_names(cohort.merged18s))
 glom.18s <- tax_glom(cohort.merged18s, taxrank = "Rank3")
 glom.18s <- transform_sample_counts(glom.18s, function(x) x / sum(x))
 
+prune_taxa(names(sort(taxa_sums(glom.18s), TRUE))[0:11], glom.18s) %>% psmelt() %>%
+  group_by(OTU, Rank2, Rank3) %>% summarize(mean = mean(Abundance)) %>% arrange(-mean) %>%
+  kable()
+
 # Select top Phyla
 glom.18s.top <- prune_taxa(names(sort(taxa_sums(glom.18s), TRUE))[0:7], glom.18s)
 sum(taxa_sums(glom.18s.top)) / sum(taxa_sums(glom.18s))
@@ -574,23 +595,73 @@ glom.18s.top.melt$Phylum <- gsub('D_..__', '', glom.18s.top.melt$Phylum)
 
 # Graph
 glom.18s.top.gg <- ggplot(glom.18s.top.melt, aes(x = as.numeric(Day), y = Abundance, fill = Phylum))
-part1.18s <- glom.18s.top.gg + geom_area() +
+part1.18s.Rank3 <- glom.18s.top.gg + geom_area() +
   pl.fill +
   labs(fill="Eukaryotes", y = "Abundance") +
   theme(plot.margin=unit(c(0,5,5,5), units = "pt"), legend.justification = 'left') +
   scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL)
-part1.18s
+part1.18s.Rank3
 
 
 ```
 
+
+
+```{r ra.phylum.18s.alt}
+# Merge by day
+cohort.merged18s <- merge_samples(rar.18s.cohort, "Day")
+
+# Fix mangled metadata
+sample_data(cohort.merged18s)$Day <- as.numeric(sample_names(cohort.merged18s))
+
+# Glom OTUs by Phyla and transform to RA
+glom.18s <- tax_glom(cohort.merged18s, taxrank = "Rank2")
+glom.18s <- transform_sample_counts(glom.18s, function(x) x / sum(x))
+
+prune_taxa(names(sort(taxa_sums(glom.18s), TRUE))[0:11], glom.18s) %>% psmelt() %>%
+  group_by(OTU, Rank2) %>% summarize(total = sum(Abundance)) %>% arrange(-total) %>%
+  kable()
+
+# Select top Phyla
+glom.18s.top <- prune_taxa(names(sort(taxa_sums(glom.18s), TRUE))[0:7], glom.18s)
+sum(taxa_sums(glom.18s.top)) / sum(taxa_sums(glom.18s))
+
+# Melt for graphing and strip prefix
+glom.18s.top.melt <- psmelt(glom.18s.top)
+glom.18s.top.melt <- arrange(glom.18s.top.melt, Day, Rank2)
+
+glom.18s.top.melt$Phylum <- gsub('D_.__', '', glom.18s.top.melt$Rank2)
+glom.18s.top.melt$Phylum <- gsub('D_..__', '', glom.18s.top.melt$Phylum)
+
+# Graph
+glom.18s.top.gg <- ggplot(glom.18s.top.melt, aes(x = as.numeric(Day), y = Abundance, fill = Phylum))
+part1.18s.Rank2 <- glom.18s.top.gg + geom_area() +
+  pl.fill +
+  labs(fill="Eukaryotes", y = "Abundance") +
+  theme(plot.margin=unit(c(0,5,5,5), units = "pt"), legend.justification = 'left') +
+  scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL)
+part1.18s.Rank2
+
+
+```
+
+
+
+
 ```{r ra.phylum.graph, include=T, fig.height=5, fig.width=5}
-phylum.both <- plot_grid(part1, part1.18s, rel_heights = c(1,1.2),
+phylum.both.rank3 <- plot_grid(part1, part1.18s.Rank3, rel_heights = c(1,1.2),
                         #labels = c("A", "B"),
                         align = "v", nrow = 2)
-phylum.both
+phylum.both.rank3
 
-ggsave("./figures/phylum.both.pdf", phylum.both, scale = 1.3, width = 89, height = 89, units = "mm")
+ggsave("./figures/phylum.both.Rank3.pdf", phylum.both.rank3, scale = 1.3, width = 89, height = 89, units = "mm")
+
+phylum.both.rank2 <- plot_grid(part1, part1.18s.Rank2, rel_heights = c(1,1.2),
+                        #labels = c("A", "B"),
+                        align = "v", nrow = 2)
+phylum.both.rank2
+
+ggsave("./figures/phylum.both.Rank2.pdf", phylum.both.rank2, scale = 1.3, width = 89, height = 89, units = "mm")
 
 
 ```
@@ -598,16 +669,27 @@ ggsave("./figures/phylum.both.pdf", phylum.both, scale = 1.3, width = 89, height
 
 
 ```{r plot-fig1, include=T, results='hide'}
-combined.fig1 <-
-  plot_grid(alpha.both.alt, phylum.both, labels = c("A", "B"),
-            align = "h", nrow = 1, rel_widths = c(1.1, 1), scale = c(1,1))
-ggsave("./figures/fig1.pdf", combined.fig1, scale = 1.4, width = 178, height = 77, units = "mm")
+# combined.fig1 <-
+#   plot_grid(alpha.both.alt, phylum.both, labels = c("A", "B"),
+#             align = "h", nrow = 1, rel_widths = c(1.1, 1), scale = c(1,1))
+# ggsave("./figures/fig1.pdf", combined.fig1, scale = 1.4, width = 178, height = 77, units = "mm")
+#
+# combined.wide.fig1 <-
+#   plot_grid(alpha.both.alt, phylum.both, labels = c("A", "B"),
+#             align = "v", ncol = 1, rel_heights = c(1, 1.2), scale = c(1,1))
+# ggsave("./figures/fig1-wide.pdf", combined.wide.fig1, scale = 1.3, width = 89, height = 160, units = "mm")
+#
 
-combined.wide.fig1 <-
-  plot_grid(alpha.both.alt, phylum.both, labels = c("A", "B"),
+# new all silva graphs
+combined.tall.fig1.Rank2 <-
+  plot_grid(alpha.both.alt, phylum.both.rank2, labels = c("A", "B"),
             align = "v", ncol = 1, rel_heights = c(1, 1.2), scale = c(1,1))
-ggsave("./figures/fig1-wide.pdf", combined.wide.fig1, scale = 1.3, width = 89, height = 160, units = "mm")
+ggsave("./figures/fig1-tall-Rank2.pdf", combined.tall.fig1.Rank2, scale = 1.3, width = 89, height = 160, units = "mm")
 
+combined.tall.fig1.Rank3 <-
+  plot_grid(alpha.both.alt, phylum.both.rank3, labels = c("A", "B"),
+            align = "v", ncol = 1, rel_heights = c(1, 1.2), scale = c(1,1))
+ggsave("./figures/fig1-tall-Rank3.pdf", combined.tall.fig1.Rank3, scale = 1.3, width = 89, height = 160, units = "mm")
 
 
 ```
@@ -661,20 +743,23 @@ clean_silva_tax <- function(pmelted){
   pmelted$Taxonomy <- gsub('D_..__', '', pmelted$Taxonomy)
   pmelted$Taxonomy <- gsub(' ,', '', pmelted$Taxonomy)
 
-  pmelted$Domain <- gsub('D_.__', '', pmelted$Rank1)  #D_0
-  pmelted$Kingdom <- gsub('D_.__', '', pmelted$Rank2) #D_1
-  pmelted$Phylum <- gsub('D_.__', '', pmelted$Rank3)  #D_2
-  pmelted$Class <- gsub('D_.__', '', pmelted$Rank4)   #D_3
-  pmelted$Order <- gsub('D_.__', '', pmelted$Rank5)   #D_4
-  pmelted$Family <- gsub('D_.__', '', pmelted$Rank6)  #D_5
-  pmelted$Genus <- gsub('D_.__', '', pmelted$Rank7)  #D_6
+  pmelted$Kingdom <- gsub('D_.__', '', pmelted$Rank1)  #D_0
+  pmelted$Phylum <- gsub('D_.__', '', pmelted$Rank2) #D_1
+  pmelted$Class <- gsub('D_.__', '', pmelted$Rank3)  #D_2
+  pmelted$Order <- gsub('D_.__', '', pmelted$Rank4)   #D_3
+  pmelted$Family <- gsub('D_.__', '', pmelted$Rank5)   #D_4
+  pmelted$Genus <- gsub('D_.__', '', pmelted$Rank6)  #D_5
+  
+  if("Rank7" %in% names(pmelted)){
+    pmelted$Species <- gsub('D_.__', '', pmelted$Rank7)  #D_6
+  }
 
   return(pmelted)
 }
 
 aggregate_tax_by_day <- function(pmelted){
   # Calculate median of the Abundance for each taxa at each day
-  paggregated <- aggregate(Abundance ~ OTU + Day + Taxonomy,
+  paggregated <- aggregate(Abundance ~ OTU + Rank1 + Rank2 + Rank3 + Day + Taxonomy,
                        data = pmelted,
                        FUN = function(x) median(x))
   return(paggregated)
@@ -682,7 +767,7 @@ aggregate_tax_by_day <- function(pmelted){
 
 aggregate_tax_by_day_n <- function(pmelted){
   # Same as above, but also casts Day as numeric
-  paggregated <- aggregate(Abundance ~ OTU + Day + Taxonomy,
+  paggregated <- aggregate(Abundance ~ OTU + Rank1 + Rank2 + Rank3 + Day + Taxonomy,
                        data = pmelted,
                        FUN = function(x) median(x))
 
@@ -691,7 +776,6 @@ aggregate_tax_by_day_n <- function(pmelted){
   return(paggregated)
 }
 
-
 ```
 
 ```{r glom_for_ra_graphs}
@@ -699,16 +783,18 @@ aggregate_tax_by_day_n <- function(pmelted){
 glom6.16s <- tax_glom(rar.16s.cohort, taxrank = "Rank6")
 glom6.16s <- transform_sample_counts(glom6.16s, function(x) x / sum(x))
 
-# This overwrites the genera used before.
-glom.18s <- tax_glom(rar.18s.cohort, taxrank = "Rank7")
-glom.18s <- transform_sample_counts(glom.18s, function(x) x / sum(x))
+glom6.18s <- tax_glom(rar.18s.cohort, taxrank = "Rank6")
+glom6.18s <- transform_sample_counts(glom6.18s, function(x) x / sum(x))
+glom7.18s <- tax_glom(rar.18s.cohort, taxrank = "Rank7")
+glom7.18s <- transform_sample_counts(glom7.18s, function(x) x / sum(x))
+
+
 ```
 
 
 ### Set threshold for inclusion
-```{r ra.threshold}
-selection_threshold <- 0.02
-
+```{r ra.threshold, cache=F}
+selection_threshold <- 0.05
 # for a comparison to 0.05, see the file `Compare .02 vs .05.PNG`
 ```
 
@@ -719,7 +805,7 @@ glom6.16s.days <- subset_samples(glom6.16s, Day %in% c("8", "79"))
 glom6.16s.days.top <- prune_taxa(names(sort(taxa_sums(glom6.16s.days), TRUE))[0:20], glom6.16s.days)
 
 # Melt to dataframe
-glom6.16s.days.top.melt <- clean_gg_tax(psmelt(glom6.16s.days.top))
+glom6.16s.days.top.melt <- clean_silva_tax(psmelt(glom6.16s.days.top))
 
 # Sort OTUs by their medians in day 8
 glom6.16s.days.top.melt.8 <- subset(glom6.16s.days.top.melt, Day == "8")
@@ -749,8 +835,9 @@ scree.16s
 glom6.16s.days.top.median <- aggregate_tax_by_day(glom6.16s.days.top.melt)
 
 # Select the genera with medians above the cutoff.
-glom6.16s.days.top.median.top <- glom6.16s.days.top.median[glom6.16s.days.top.median$Abundance > selection_threshold, ]
-glom6.16s.days.top.median.top %>% arrange(Day, -Abundance)
+glom6.16s.days.top.median.top <- glom6.16s.days.top.median %>%
+  filter(Abundance > selection_threshold) %>% arrange(Day, -Abundance)
+glom6.16s.days.top.median.top
 
 # Select these OTUs from all days, for use in the line graphs
 glom6.16s.all.select_taxa <- prune_taxa(as.character(glom6.16s.days.top.median.top$OTU), glom6.16s)
@@ -762,9 +849,9 @@ glom6.16s.all.select_taxa
 
 ### 18S rank abundance curve, for days 8 and 79
 
-```{r ra.scree.18s, fig.width=8, cache=T}
+```{r ra.scree.18s, fig.width=8}
 # Select top genera from day 8 and 79
-glom.18s.days <- subset_samples(glom.18s, Day %in% c("8", "79"))
+glom.18s.days <- subset_samples(glom6.18s, Day %in% c("8", "79"))
 glom.18s.days.top <- prune_taxa(names(sort(taxa_sums(glom.18s.days), TRUE))[0:20], glom.18s.days)
 
 # Melt to dataframe
@@ -799,11 +886,12 @@ scree.18s
 glom.18s.days.top.median <- aggregate_tax_by_day(glom.18s.days.top.melt)
 
 # Select the genera with medians above the cutoff.
-glom.18s.days.top.median.top <- glom.18s.days.top.median[glom.18s.days.top.median$Abundance > selection_threshold, ]
+glom.18s.days.top.median.top <- glom.18s.days.top.median %>%
+  filter(Abundance > selection_threshold) %>% arrange(Day, -Abundance)
 glom.18s.days.top.median.top %>% arrange(Day, -Abundance)
 
 # Select these OTUs from all days, for use in the line graphs
-glom.18s.all.select_taxa <- prune_taxa(as.character(glom.18s.days.top.median.top$OTU), glom.18s)
+glom.18s.all.select_taxa <- prune_taxa(as.character(glom.18s.days.top.median.top$OTU), glom6.18s)
 glom.18s.all.select_taxa
 
 
@@ -840,7 +928,7 @@ Note that we intentionally replace these taxonomies with more useful annotations
 
 ```{r ra.16s.line, fig.width=8, fig.height=4}
 # Graph this: glom6.16s.all.select_taxa
-select.16s.melt <- clean_gg_tax(psmelt(glom6.16s.all.select_taxa))
+select.16s.melt <- clean_silva_tax(psmelt(glom6.16s.all.select_taxa))
 #head(select.16s.melt)
 
 # Aggregate for graphing
@@ -855,22 +943,29 @@ select.16s.median$`Founders Species` <- factor(select.16s.median$`Founders Speci
                                                labels = c("Founders Species", "Other Common Genera"))
 
 # replace taxa names
-select.16s.median$Taxonomy[select.16s.median$Taxonomy == "GMD14H09, "] <- "Deltaproteobacteria, GMD14H09"
+#select.16s.median$Taxonomy[select.16s.median$Taxonomy == "GMD14H09, "] <- "Deltaproteobacteria, GMD14H09"
 
 select.16s.gg <- ggplot(select.16s.median, aes(x = Day, y = Abundance))
 #select.16s.gg + geom_bar(aes(fill = Taxonomy), color = 'black', stat = 'identity')
 selected.16s.line <- select.16s.gg +
   geom_line(aes(color = Taxonomy, linetype=`Founders Species`)) +
   geom_point(aes(color = Taxonomy)) + v +
-  scale_linetype(name="", guide = FALSE) +
+  scale_linetype(name="", guide = T) +
   scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL) +
+  theme(legend.spacing = unit(-0.5, "cm"), legend.background = element_blank()) + 
   #   #This next line is a kludge. I manually dash the legend lines to show which ones are FS.
-  guides(color=guide_legend(override.aes=list(linetype=c(2,2,2,1,1,1,2,1), shape = c(NA))))
-
+  #guides(color=guide_legend(override.aes=list(linetype=c(2,2,2,1,1,1,2,1), shape = c(NA))))
+  guides(color=guide_legend(override.aes=list(linetype=c(2,2,1,2,1,1), shape = c(NA)), order = 1)
+                   ,linetype = guide_legend(override.aes=list(linetype=c(1,2)), order = 2)
+)
+# 2 is dashed, 1 is solid
 selected.16s.line
 
 # Table of species
-select.16s.median %>% dplyr::select(Taxonomy, `Founders Species`) %>% unique %>% kable
+select.16s.median %>%
+  dplyr::select(Rank1, Rank2, Rank3, Taxonomy, `Founders Species`) %>%
+  unique %>% kable(row.names = F)
+
 
 ```
 
@@ -897,19 +992,20 @@ select.18s.gg <- ggplot(select.18s.median, aes(x = Day, y = Abundance))
 select.18s.line <- select.18s.gg +
   geom_line(aes(color = Taxonomy, linetype=`Founders Species`)) +
   geom_point(aes(color = Taxonomy)) + pl +
-  scale_linetype(name= element_blank()) +
+  scale_linetype(name= element_blank(), guide = F) +
   scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL) +
   theme(legend.spacing = unit(-0.5, "cm"), legend.background = element_blank()) +
   #   #This next line is a kludge. I manually dash the legend lines to show which ones are FS.
-  guides(color     = guide_legend(override.aes=list(linetype=c(1,1,1,1,2,2,1), shape = c(NA)), order = 1)
-         ,linetype = guide_legend(override.aes=list(linetype=c(1,2)), order = 2)
-        )
+  # guides(color     = guide_legend(override.aes=list(linetype=c(1,1,1,1,2,2,1), shape = c(NA)), order = 1)
+   guides(color     = guide_legend(override.aes=list(linetype=c(1,1, 2, 1,1), shape = c(NA)), order = 1)
+         )
 
 select.18s.line
 
 # Table of species
-select.18s.median %>% dplyr::select(Taxonomy, `Founders Species`) %>% unique %>% kable
-
+select.18s.median %>%
+  dplyr::select(Rank1, Rank2, Rank3, Taxonomy, `Founders Species`) %>%
+  unique %>% kable(row.names = F)
 
 ```
 
@@ -925,13 +1021,17 @@ scree.line.both.alt <- plot_grid(rel_heights = c(1, 1.1),
           select.18s.line)
 #scree.line.both.alt
 
-ggsave("./figures/scree_and_line.pdf", scree.line.both.alt, scale = 1.6, width = 183, height = 82, units = "mm")
 
+ggsave("./figures/scree_and_line_silva.pdf", scree.line.both.alt, scale = 1.6, width = 183, height = 82, units = "mm")
 
 ```
 
 
 ### Inspect specific microbes to correct or contextualize their taxonomy
+
+Note: This section reflects limitations of our initial filtering and taxonomy methods.
+Now that we use a unified tabase and filter out chloroplasts and mitochondria,
+many of these issues are mitigated.
 
 ```{r inspect-specific-taxa, include=T, eval=F}
 glom6.16s.all.select_taxa %>% tax_table()
