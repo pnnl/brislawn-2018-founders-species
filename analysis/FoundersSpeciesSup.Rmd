@@ -153,7 +153,7 @@ rar.16s.cohort
 are used.
 
 ```{r preprocess18s, include=T}
-filtered18s <- subset_taxa(full18s, Rank1 %in% c("D_0__Archaea", "D_0__Eukaryota"))
+filtered18s <- subset_taxa(full18s, Rank1 %in% c("D_0__Eukaryota"))
 ntaxa(filtered18s) / ntaxa(full18s) # these 18S primers amplify lots of bacteria, but that's expected
 sum(taxa_sums(filtered18s)) / sum(taxa_sums(full18s))
 
@@ -161,8 +161,8 @@ sum(taxa_sums(filtered18s)) / sum(taxa_sums(full18s))
 # chloroplasts on the 18S amplicons
 
 filtered18s <- subset_taxa(filtered18s, Rank5 != "D_4__Mitochondria")
-ntaxa(filtered18s) / ntaxa(full18s) # more than 25% of OTUs are mitochondria
-sum(taxa_sums(filtered18s)) / sum(taxa_sums(full18s)) # but < 4% of reads
+ntaxa(filtered18s) / ntaxa(full18s) # more than 5% of OTUs are mitochondria
+sum(taxa_sums(filtered18s)) / sum(taxa_sums(full18s)) # but < 5% of reads
 
 filtered18s <- subset_taxa(filtered18s, Rank4 != "D_3__Chloroplast")
 ntaxa(filtered18s) / ntaxa(full18s) # < 0.1% are chloroplast
@@ -528,7 +528,7 @@ documentation uses the correct term, 'scree' is still used in the code.
 
 ### 16S RA 1: phylum
 
-```{r ra.phylum.16s}
+```{r ra.taxa.16s}
 # Merge by day
 cohort.merged <- merge_samples(rar.16s.cohort, "Day")
 
@@ -565,9 +565,9 @@ part1
 ```
 
 
-### 18S RA 1: phylum
+### 18S RA 1: class
 
-```{r ra.phylum.18s}
+```{r ra.taxa.18s}
 # Merge by day
 cohort.merged18s <- merge_samples(rar.18s.cohort, "Day")
 
@@ -587,14 +587,14 @@ glom.18s.top <- prune_taxa(names(sort(taxa_sums(glom.18s), TRUE))[0:7], glom.18s
 sum(taxa_sums(glom.18s.top)) / sum(taxa_sums(glom.18s))
 
 # Melt for graphing and strip prefix
-glom.18s.top.melt <- psmelt(glom.18s.top)
-glom.18s.top.melt <- arrange(glom.18s.top.melt, Day, Rank3)
+glom.18s.top.melt <- glom.18s.top %>% psmelt() %>% arrange(Day, Rank3)
 
-glom.18s.top.melt$Phylum <- gsub('D_.__', '', glom.18s.top.melt$Rank3)
-glom.18s.top.melt$Phylum <- gsub('D_..__', '', glom.18s.top.melt$Phylum)
+glom.18s.top.melt <- glom.18s.top.melt %>%
+  mutate(Rank3 = gsub('D_.__', '', .$Rank3)) %>%
+  mutate(Rank3 = gsub('D_..__', '', .$Rank3))
 
 # Graph
-glom.18s.top.gg <- ggplot(glom.18s.top.melt, aes(x = as.numeric(Day), y = Abundance, fill = Phylum))
+glom.18s.top.gg <- ggplot(glom.18s.top.melt, aes(x = as.numeric(Day), y = Abundance, fill = Rank3))
 part1.18s.Rank3 <- glom.18s.top.gg + geom_area() +
   pl.fill +
   labs(fill="Eukaryotes", y = "Abundance") +
@@ -607,7 +607,7 @@ part1.18s.Rank3
 
 
 
-```{r ra.phylum.18s.alt}
+```{r ra.taxa.18s.alt}
 # Merge by day
 cohort.merged18s <- merge_samples(rar.18s.cohort, "Day")
 
@@ -641,7 +641,8 @@ part1.18s.Rank2 <- glom.18s.top.gg + geom_area() +
   theme(plot.margin=unit(c(0,5,5,5), units = "pt"), legend.justification = 'left') +
   scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL)
 part1.18s.Rank2
-
+# This graph is less useful then Rank3, shown above, as this comunity is
+# simply dominated by SAR at the Rank2 level.
 
 ```
 
@@ -662,6 +663,7 @@ phylum.both.rank2 <- plot_grid(part1, part1.18s.Rank2, rel_heights = c(1,1.2),
 phylum.both.rank2
 
 ggsave("./figures/phylum.both.Rank2.pdf", phylum.both.rank2, scale = 1.3, width = 89, height = 89, units = "mm")
+
 
 
 ```
@@ -1728,7 +1730,8 @@ bnti.melt %>% filter(row_cat == var_cat) %>% dplyr::select(value) %>% summary
 bnti.melt %>% filter(microbe == "16S" & row_cat == var_cat) %>%
   ggplot(aes(y = value, x = as.numeric(as.character(var_cat)))) +
   geom_hline(yintercept = c(0, 2, -2), color = "blue", alpha = 0.6) +
-  geom_boxplot(aes(group = var_cat), outlier.alpha = 0) + geom_jitter(width = .5, alpha = .1) +
+  #geom_boxplot(aes(group = var_cat), outlier.alpha = 0) +
+  geom_jitter(width = .5, alpha = .1) +
   geom_smooth(color = "#6DCD59", method = "lm", size = 1, se = F) +
   #facet_grid(~microbe) +
   labs(x = "Bacteria Sampling Day", y = "BetaNTI") +
@@ -1738,12 +1741,24 @@ bnti.melt %>% filter(microbe == "16S" & row_cat == var_cat) %>%
 bnti.melt %>% filter(microbe == "18S" & row_cat == var_cat) %>%
   ggplot(aes(y = value, x = as.numeric(as.character(var_cat)))) +
   geom_hline(yintercept = c(0, 2, -2), color = "blue", alpha = 0.6) +
-  geom_boxplot(aes(group = var_cat), outlier.alpha = 0) + geom_jitter(width = .5, alpha = .1) +
+  #geom_boxplot(aes(group = var_cat), outlier.alpha = 0) +
+  geom_jitter(width = .5, alpha = .1) +
   geom_smooth(color = "#9F2F7F", method = "lm", size = 1, se = F) +
   #facet_grid(~microbe) +
   labs(x = "Eukaryotes Sampling Day", y = "BetaNTI") +
   scale_y_continuous(limits = c(-6, 9)) +
   theme(strip.background = element_blank())
+
+bnti.melt %>% filter(microbe == "18S" & row_cat == 8 & var_cat == 8) %>%
+  dplyr::select(value) %>% unlist() %>% summary()
+
+bnti.melt %>% filter(microbe == "18S" & row_cat == 8 & var_cat == 8) %>%
+  dplyr::select(value) %>% kable()
+
+bnti.melt %>% filter(row_cat == var_cat) %>%
+  group_by(row_cat, microbe) %>%
+  summarize(mean = mean(value), median = median(value)) %>%
+  arrange(microbe) %>% kable()
 
 ```
 
