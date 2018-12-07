@@ -556,11 +556,10 @@ glom.top.melt$Phylum <- gsub('D_1__', '', glom.top.melt$Rank2)
 glom.top.gg <- ggplot(glom.top.melt, aes(x = as.numeric(Day), y = Abundance, fill = Phylum))
 part1 <- glom.top.gg + geom_area() +
   v.fill +
-  labs(fill = "Bacteria", y = "Abundance") +
+  labs(fill = "Bacteria", y = "Relative Abundance") +
   theme(plot.margin=unit(c(5,5,-25,5), units = "pt"), legend.justification = 'left') +
   scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL)
 part1
-
 
 ```
 
@@ -597,11 +596,10 @@ glom.18s.top.melt <- glom.18s.top.melt %>%
 glom.18s.top.gg <- ggplot(glom.18s.top.melt, aes(x = as.numeric(Day), y = Abundance, fill = Rank3))
 part1.18s.Rank3 <- glom.18s.top.gg + geom_area() +
   pl.fill +
-  labs(fill="Eukaryotes", y = "Abundance") +
+  labs(fill="Eukaryotes", y = "Relative Abundance") +
   theme(plot.margin=unit(c(0,5,5,5), units = "pt"), legend.justification = 'left') +
   scale_x_continuous("Sampling Day", c(8,14,35,56,79), NULL)
 part1.18s.Rank3
-
 
 ```
 
@@ -871,7 +869,7 @@ levels(glom.18s.days.top.melt$Day) <- c("Day 8", "Day 79")
 glom.18s.days.top.gg <- ggplot(glom.18s.days.top.melt, aes(x=OTU, y = Abundance))
 scree.18s <- glom.18s.days.top.gg +
   geom_hline(yintercept = selection_threshold, size = 1) +
-  geom_boxplot(aes(color = Phylum)) +
+  geom_boxplot(aes(color = Class)) +
   pl +
   labs(title = "Most Common Eukaryotes", y = "Abundance") +
   facet_grid(~Day) +
