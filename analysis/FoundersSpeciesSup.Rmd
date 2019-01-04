@@ -463,8 +463,8 @@ Pairwise comparison between groups using `multcomp::glht()`
 ```{r alpha.test.16s}
 # Simple means
 DF.16s %>% group_by(Day) %>% summarize(meanRich = mean(Richness), meanEven = mean(Evenness))
-1 - 233.3889 / 557.7500 # richness decrease between Day 8 and 79
-0.02940754 / 0.02391469 - 1 # Evenness increase between Day 35 and 79
+1 - 225.6111 / 549.0000 # richness decrease between Day 8 and 79
+0.03012419 / 0.02386853 - 1 # Evenness increase between Day 35 and 79
 
 #DF.16s %>% ggplot(aes(x = Richness)) + geom_dotplot() + facet_grid(Day~.)
 DF.16s %>% glm(Richness ~ Day, family = "poisson", data = .) %>%
@@ -485,8 +485,8 @@ DF.16s %>% summarize(medRich = median(Richness), medEven = median(Evenness))
 ```{r alpha.test.18s}
 # Simple means
 DF.18s %>% group_by(Day) %>% summarize(meanRich = mean(Richness), meanEven = mean(Evenness))
-227.0000 / 372.7500 # fraction of OTUs remaining on day 79 (vs day 8)
-1 - 227.0000 / 372.7500 # fraction of OTUs lost on day 79 (vs day 8)
+86.30769 / 102.00000 # fraction of OTUs remaining on day 79 (vs day 8)
+1 - 86.30769 / 102.00000 # fraction of OTUs lost on day 79 (vs day 8)
 
 #DF.18s %>% ggplot(aes(x = Richness)) + geom_dotplot() + facet_grid(Day~.)
 DF.18s %>% glm(Richness ~ Day, family = "poisson", data = .) %>%
@@ -498,6 +498,7 @@ DF.18s %>% glm(Evenness ~ Day, family = "Gamma", data = .) %>%
 
 # overall median evenness
 DF.18s %>% summarize(medRich = median(Richness), medEven = median(Evenness))
+
 
 
 ```
