@@ -1,10 +1,14 @@
-### Forfeiting the founder effect: turnover defines biofilm community succession
+### Forfeiting the priority effect: turnover defines biofilm community succession
 
-Manuscript in prep.
+**[View the paper now!](https://rdcu.be/brTdr)**
+
+Published in ISME J, March 18th, available through [open-access-link](https://rdcu.be/brTdr), [ISME J website](https://www.nature.com/articles/s41396-019-0396-x), [DOI](https://doi.org/10.1038/s41396-019-0396-x)
+
+The preprint is [also on BioRxiv](https://www.biorxiv.org/content/10.1101/282574v2)
 
 This has also been called the **Founder Species project**, because it tracks the success of founder species.
 
-PNNL Information Release number assigned to this Journal Article is:
+PNNL Information Release number assigned to this Journal Article is: [PNNL-SA-133067](https://informationrelease.pnl.gov/release/267695)
 
 ---
 
